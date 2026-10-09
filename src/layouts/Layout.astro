@@ -26,12 +26,48 @@
 	.login {
 		background: rgba(255, 255, 255, 0.1);
 		backdrop-filter: blur(10px);
-		padding: 40px;
+		padding: 65px;
 		border-radius: 25px;
 		width: 25%;
 		color: #fff;
 		text-align: center;
 		box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+	}
+	.password-wrapper {
+		position: relative;
+		display: inline-block; 
+		width: 100%;
+	}
+#username, 
+.password-wrapper input {
+    box-sizing: border-box;
+    width: 100%;
+    padding: 12px 15px;
+}
+	.password-wrapper input {
+		box-sizing: border-box;
+		width: 100%;
+		padding: 12px 15px;
+	}
+	.password-wrapper .toggle-password {
+		position: absolute;
+		top: 50%;
+		right: 15px;
+		transform: translateY(-50%);
+		width: 45px;
+		margin: 0;
+		padding:  8px 0;
+		background: transparent;
+		color: #ffffff;
+		border: none;
+		border-radius: 8px;
+		cursor: pointer;
+		font-size: 13px;
+		font-weight:bold;
+		text-align: center;
+	}
+	.password-wrapper .toggle-password:hover {
+		background: rgba(255, 255, 255, 0.15);
 	}
 	input {
 		width: 95%;
@@ -64,21 +100,42 @@ button{
 <body>
 
 		<form id="loginForm" class="login">
+
 			<h2>Login</h2>
-			<input type="text" id="username" placeholder="Username" />
-			<input type="password" id="password" placeholder="Password" />
+			<input type="text" id="username" name="username" placeholder="Username" autocomplete="username" required />
 			
-		<button type="submit">Login</button>
+			<div class="password-wrapper">
+			<input type="password" id="password" name="password" placeholder="Password" autocomplete="current-password" required/>
+			<button type="button" id="togglePassword" class="toggle-password" aria-label="Show password" aria-pressed="false">Show</button>
+			</div>
+
 		</form>
 
 	<script>
 const loginForm = document.getElementById("loginForm");
+const usernameInput = document.getElementById("username") as HTMLInputElement;
+const passwordInput = document.getElementById("password") as HTMLInputElement;
+const passwordField = document.getElementById("password") as HTMLInputElement;
+const togglePasswordButton = document.getElementById("togglePassword") as HTMLButtonElement;
 
-loginForm.addEventListener("submit", function (event) { 
-event.preventDefault();
+togglePasswordButton?.addEventListener("click", () => {
+if (!passwordField) return;
 
-	const username = document.getElementById("username").value.trim();
-	const password = document.getElementById("password").value;
+	const isPasswordHidden = passwordField.type === "password";
+			passwordField.type = isPasswordHidden ? "text" : "password";
+			togglePasswordButton.textContent = isPasswordHidden ? "Hide" : "Show";
+		
+			togglePasswordButton.setAttribute("aria-label", isPasswordHidden ? "Hide password" : "Show password");
+			togglePasswordButton.setAttribute("aria-pressed", String(isPasswordHidden));
+
+});
+
+loginForm?.addEventListener("submit", (event) => { 
+    event.preventDefault();
+
+const usernameInput = document.getElementById("username") as HTMLInputElement;		
+const username = usernameInput?.value.trim();
+const password = passwordInput?.value;
 
 
 	if (username === "" || password === "") {
@@ -91,6 +148,7 @@ event.preventDefault();
 	} else {
 		alert("Invalid username or password.");
 	}
+
 });
 
 </script>
