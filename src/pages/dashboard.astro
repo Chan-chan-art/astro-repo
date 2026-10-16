@@ -1,0 +1,78 @@
+---
+// src/pages/dashboard.astro
+export const prerender = false;
+
+// 1. Check if the user has an active session cookie
+const sessionCookie = Astro.cookies.get("user_session");
+
+if (!sessionCookie) {
+  // If no cookie exists, redirect them immediately to your login page
+  return Astro.redirect('/'); 
+}
+
+const loggedInUser = sessionCookie.value;
+---
+
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width" />
+		<title>Dashboard</title>
+		<style>
+			body {
+				margin: 0;
+				display: flex;
+				flex-direction: column;
+				justify-content: center;
+				align-items: center;
+				height: 100vh;
+				background: linear-gradient(135deg, #1f4037 0%, #99f2c8 100%);
+				font-family: Arial, sans-serif;
+				color: #fff;
+			}
+			.dashboard-card {
+				background: rgba(255, 255, 255, 0.1);
+				backdrop-filter: blur(10px);
+				padding: 50px;
+				border-radius: 25px;
+				text-align: center;
+				box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.3);
+				width: 30%;
+			}
+			h1 {
+				margin-bottom: 10px;
+			}
+			p {
+				color: rgba(255, 255, 255, 0.8);
+				margin-bottom: 30px;
+			}
+			.btn-logout {
+				background: #ff4b2b;
+				color: #fff;
+				padding: 12px 25px;
+				border-radius: 25px;
+				cursor: pointer;
+				font-weight: bold;
+				border: none;
+				transition: 0.2s;
+			}
+			.btn-logout:hover {
+				background: #ff416c;
+				transform: scale(1.05);
+			}
+		</style>
+	</head>	
+
+	<body>
+		<div class="dashboard-card">
+			<h1>Welcome, {loggedInUser}! 👋</h1>
+			<p>You have successfully unlocked your private dashboard screen.</p>
+			
+			<!-- Clicking this button triggers the logout form endpoint -->
+			<form action="/logout-api" method="POST">
+				<button type="submit" class="btn-logout">Log Out</button>
+			</form>
+		</div>
+	</body>
+</html>

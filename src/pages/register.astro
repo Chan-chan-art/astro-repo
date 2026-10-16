@@ -1,0 +1,119 @@
+---
+// Clean server-side fence block
+---
+
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width" />
+		<title>Register</title>
+
+		<style>
+			body {
+				margin: 0;
+				display: flex;
+				justify-content: center;
+				align-items: center;
+				height: 100vh;
+				background: linear-gradient(135deg, #6a11cb 0%, #2575fc 100%);
+				font-family: Arial, sans-serif;
+			}
+			.login {
+				background: rgba(255, 255, 255, 0.1);
+				backdrop-filter: blur(10px);
+				padding: 65px;
+				border-radius: 25px;
+				width: 25%;
+				color: #fff;
+				text-align: center;
+				box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+			}
+			input {
+				width: 90%;
+				padding: 12px;
+				margin: 10px 0;
+				border: none;
+				border-radius: 25px;
+				background: rgba(255, 255, 255, 0.2);
+				color: #fff;
+				outline: none;
+			}
+			input::placeholder {
+				color: rgba(255, 255, 255, 0.7);
+			}
+		 #input-fields, .button-submit {
+				place-items: center;
+				margin-left: 4px;
+			}
+		 button {
+				background: #fff;
+				color: #6a11cb;
+				padding: 12px 15px;
+				border-radius: 25px;
+				width: 60%;
+				cursor: pointer;
+				font-weight: bold;
+				margin-top: 20px;
+				border: none;
+			}
+			button:hover {
+				opacity: 0.9;
+			}
+			.link-text {
+				margin-top: 20px;
+				font-size: 14px;
+			}
+			.link-text a {
+				color: #fff;
+				font-weight: bold;
+			}
+		</style>
+	</head>	
+
+	<body>
+		<form id="registerForm" class="login">
+			<h2>Create Account</h2>
+			
+			<div class="input-fields">
+			<input type="text" id="username" name="username" placeholder="Username" required />
+			<input type="email" id="email" name="email" placeholder="Email Address" required />
+			<input type="password" id="password" name="password" placeholder="Password (min 6 characters)" required/>
+			</div>
+			<button type="submit" class="button-submit">Sign Up</button>
+			<p class="link-text">Already have an account? <a href="/">Login here</a></p>
+		</form>
+
+		<script>
+			const registerForm = document.getElementById("registerForm") as HTMLFormElement;
+
+			registerForm?.addEventListener("submit", async (event) => {
+				event.preventDefault();
+
+				const passwordInput = document.getElementById("password") as HTMLInputElement;
+				if (passwordInput.value.length < 6) {
+					alert("Password must be at least 6 characters long.");
+					return;
+				}
+
+				const formData = new FormData(registerForm);
+
+				try {
+					const response = await fetch('/register-api', {
+						method: 'POST',
+						body: formData
+					});
+
+					const data = await response.json();
+					alert(data.message);
+
+					if (data.success) {
+						window.location.href = '/'; // Redirect to login page on success
+					}
+				} catch (error) {
+					alert("Failed to reach registration endpoint.");
+				}
+			});
+		</script>
+	</body>
+</html>

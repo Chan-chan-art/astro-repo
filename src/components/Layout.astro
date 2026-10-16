@@ -1,0 +1,252 @@
+---
+// src/pages/index.astro
+// Frontmatter remains clean
+---
+
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width" />
+		<title>Login</title>
+
+		<style>
+			body {
+				margin: 0;
+				display: flex;
+				justify-content: center;
+				align-items: center;
+				height: 100vh;
+				background: linear-gradient(135deg, #6a11cb 0%, #2575fc 100%);
+				font-family: Arial, sans-serif;
+			}
+			.login {
+				background: rgba(255, 255, 255, 0.1);
+				backdrop-filter: blur(10px);
+				padding: 65px;
+				border-radius: 25px;
+				width: 25%;
+				color: #fff;
+				text-align: center;
+				box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+			}
+			.password-wrapper {
+				position: relative;
+				display: inline-block; 
+				width: 100%;
+			}
+			#username, 
+			.password-wrapper input {
+				box-sizing: border-box;
+				width: 100%;
+				padding: 12px 15px;
+			}
+			.password-wrapper .toggle-password {
+				position: absolute;
+				top: 50%;
+				right: 15px;
+				transform: translateY(-50%);
+				width: 45px;
+				margin: 0;
+				padding:  8px 0;
+				background: transparent;
+				color: #ffffff;
+				border: none;
+				border-radius: 8px;
+				cursor: pointer;
+				font-size: 13px;
+				font-weight: bold;
+				text-align: center;
+			}
+			.password-wrapper .toggle-password:hover {
+				background: rgba(255, 255, 255, 0.15);
+			}
+			input {
+				width: 95%;
+				padding: 12px;
+				margin: 0;
+				border: none;
+				border-radius: 25px;
+				background: rgba(255, 255, 255, 0.2);
+				color: #fff;
+				outline: none;
+			}
+			input::placeholder {
+				color: rgba(255, 255, 255, 0.7);
+			}
+			button {
+				background: #fff;
+				color: #6a11cb;
+				padding: 12px;
+				border-radius: 25px;
+				width: 60%;
+				margin-top: 10px;
+				cursor: pointer;
+				font-weight: bold;
+				border: none;
+			}
+			button:hover {
+				opacity: 0.9;
+			}
+			.link-text {
+				margin-top: 15px;
+				font-size: 14px;
+			}
+			.link-text a {
+				color: #fff;
+				
+			}
+			/* Container to keep alignment clean */
+		.input-group {
+    width: 100%;
+    margin-bottom: 1px;
+    text-align: left;
+		}
+
+		/* Override old margins so error messages sit perfectly underneath */
+		#username, .password-wrapper {
+    margin: 5px 0 2px 0 !important;
+		}
+
+		/* The real-time error text style */
+		.error-msg {
+    color: #ff4b5c;
+    font-size: 12px;
+    font-weight: bold;
+    display: block;
+    min-height: 15px; /* Keeps the form from shifting up/down when errors appear */
+    margin-left: 12px;
+		}
+
+		/* Input fields turn red when they have the "invalid" class added by JS */
+		input.invalid {
+    border: 2px solid #ff4b5c !important;
+    background: rgba(255, 75, 92, 0.1) !important;
+		}
+
+		</style>
+	</head>	
+
+	<body>
+<form id="loginForm" class="login" novalidate> <!-- 'novalidate' stops default browser popups -->
+    <h2>Login</h2>
+    
+    <!-- Username Field Wrapper -->
+    <div class="input-group">
+        <input type="text" id="username" name="username" placeholder="Username" autocomplete="username" required />
+        <span id="usernameError" class="error-msg"></span>
+		</div>
+    
+    <!-- Password Field Wrapper -->
+     <div class="input-group">
+        <div class="password-wrapper">
+            <input type="password" id="password" name="password" placeholder="Password" autocomplete="current-password" required/>
+            <button type="button" id="togglePassword" class="toggle-password" aria-label="Show password" aria-pressed="false">Show</button>
+        </div>
+        <span id="passwordError" class="error-msg"></span>
+    </div>
+
+    <!-- Remember Me Checkbox Wrapper -->
+    <div style="display: flex; align-items: center; text-align: left; margin: 10px 8px; font-size: 14px;">
+        <input type="checkbox" id="rememberMe" name="rememberMe" style="width: auto; margin-right: 8px; cursor: pointer;" />
+        <label for="rememberMe" style="cursor: pointer; user-select: none;">Remember Me</label>
+    </div>
+
+    <!-- Submit Button -->
+    <button type="submit" id="button" class="button-submit">Login</button>
+    
+		<p class="link-text">Don't have an account? <a href="/register/">Sign Up Now!</a></p>
+    <p style="margin-top: 20px; font-size: 14px;">
+        <a href="/forgot-password" style="color: #fff; text-decoration: none; font-weight: bold;">Forgot Password?</a>
+    </p>
+</form>
+
+
+<script>
+    const loginForm = document.getElementById("loginForm") as HTMLFormElement | null;
+    const usernameField = document.getElementById("username") as HTMLInputElement | null;
+    const passwordField = document.getElementById("password") as HTMLInputElement | null;
+    
+    const usernameError = document.getElementById("usernameError");
+    const passwordError = document.getElementById("passwordError");
+    const togglePasswordButton = document.getElementById("togglePassword") as HTMLButtonElement | null;
+
+    // 1. Password Visibility Toggle Function
+    togglePasswordButton?.addEventListener("click", () => {
+        if (!passwordField || !togglePasswordButton) return;
+        const isPasswordHidden = passwordField.type === "password";
+        passwordField.type = isPasswordHidden ? "text" : "password";
+        togglePasswordButton.textContent = isPasswordHidden ? "Hide" : "Show";
+    });
+
+    // 2. REAL-TIME USERNAME VALIDATION
+    usernameField?.addEventListener("input", () => {
+        if (!usernameField || !usernameError) return;
+        
+        if (usernameField.value.trim() === "") {
+            usernameField.classList.add("invalid");
+            usernameError.textContent = "Username cannot be empty.";
+        } else {
+            usernameField.classList.remove("invalid");
+            usernameError.textContent = ""; // Clear error layout
+        }
+    });
+
+    // 3. REAL-TIME PASSWORD VALIDATION
+    passwordField?.addEventListener("input", () => {
+        if (!passwordField || !passwordError) return;
+
+        if (passwordField.value.length < 6) {
+            passwordField.classList.add("invalid");
+            passwordError.textContent = "Password must be at least 6 characters.";
+        } else {
+            passwordField.classList.remove("invalid");
+            passwordError.textContent = ""; // Clear error layout
+        }
+    });
+
+    // 4. SUBMIT EVENT HANDLER
+    loginForm?.addEventListener("submit", async (event) => { 
+        event.preventDefault();
+        if (!loginForm || !usernameField || !passwordField) return;
+
+        // Double check validation status before dispatching network requests
+        if (usernameField.value.trim() === "" || passwordField.value.length < 6) {
+            alert("Please fix the validation errors before logging in.");
+            return;
+        }
+
+        const formData = new FormData(loginForm);
+
+        try {
+            const response = await fetch('/login-api', {
+                method: 'POST',
+                body: formData
+            });
+
+            const data = await response.json();
+
+            if (data.success) {
+                window.location.href = '/dashboard'; // Dynamic entry redirect
+            } else {
+                // If database auth fails (like wrong password), map it straight to our new inline blocks instead of annoying alert windows!
+                if (data.message.toLowerCase().includes("exist")) {
+									if (usernameField && usernameError) {
+                    usernameField.classList.add("invalid");
+										usernameError.textContent = data.message;
+									}
+                } else {
+									if (passwordField && passwordError) {
+                    passwordField.classList.add("invalid");
+										passwordError.textContent = data.message;
+									}
+                }
+            }
+        } catch (error) {
+            alert("Failed to reach the authentication endpoint.");
+        }
+    });
+</script>
+
+	</body>
+</html>
