@@ -43,21 +43,23 @@ export const POST: APIRoute = async ({ request, cookies, clientAddress }) => {
       return new Response(JSON.stringify({ success: false, message: "Please enter both username and password." }), { status: 400 });
     }
 
-    // 3. Search Database for the specified Username
+    // Update your SELECT query to pull the is_verified status
     const [rows]: any = await pool.execute(
-      'SELECT id, username, password FROM users WHERE BINARY username = ?',
+      'SELECT id, username, password, is_verified FROM users WHERE BINARY username = ?',
       [username]
     );
 
-    // 🛑 CRITICAL SECURITY GUARD: If the username doesn't exist, block entry immediately!
     if (!rows || rows.length === 0) {
       return new Response(JSON.stringify({ success: false, message: "Username does not exist." }), { status: 401 });
     }
 
-    // Safely extract the found record profile
     const dbUser = rows[0];
 
-    // 4. Encrypt the input password with SHA-256 to match Registration ecosystem
+    // 🛑 🌟 SECURITY BLOCK: If the account is not verified, stop them right here!
+    if (dbUser.is_verified === 0) {
+      return new Response(JSON.stringify({ success: false, message: "Your email address is unverified. Please verify your email first." }), { status: 403 });
+    }
+ // 4. Encrypt the input password with SHA-256 to match Registration ecosystem
     const { createHash } = await import('crypto');
     const inputHash = createHash('sha256').update(password).digest('hex');
 
@@ -65,6 +67,9 @@ export const POST: APIRoute = async ({ request, cookies, clientAddress }) => {
     if (dbUser.password === inputHash) {
       // Establish dynamic session lifespan based on Remember Me parameters
       const cookieAge = rememberMe ? 60 * 60 * 24 * 30 : undefined;
+
+
+    // ... your password checking logic follows exactly as before ...
 
       cookies.set('user_session', dbUser.username, {
         path: '/',

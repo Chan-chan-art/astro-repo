@@ -1,0 +1,85 @@
+---
+// src/pages/verify-email.astro
+import { pool } from '../lib/db';
+
+export const prerender = false;
+
+const token = Astro.url.searchParams.get('token');
+let title = "Verification Status";
+let statusMessage = "";
+let success = false;
+
+if (!token) {
+  statusMessage = "Missing email verification token parameter.";
+} else {
+  try {
+    // 1. Look up the user matching this token
+    const [rows]: any = await pool.execute(
+      'SELECT id FROM users WHERE verification_token = ?',
+      [token]
+    );
+
+    if (rows.length === 1) {
+      // 2. Token found! Mark them as verified and wipe out the token
+      await pool.execute(
+        'UPDATE users SET is_verified = 1, verification_token = NULL WHERE verification_token = ?',
+        [token]
+      );
+      statusMessage = "Thank you! Your email has been verified successfully. You can now log into your account.";
+      success = true;
+    } else {
+      statusMessage = "This email verification link is invalid or has already been used.";
+    }
+  } catch (error) {
+    statusMessage = "A database connection error occurred.";
+  }
+}
+---
+
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width" />
+		<title>{title}</title>
+		<style>
+			body {
+				margin: 0;
+				display: flex;
+				justify-content: center;
+				align-items: center;
+				height: 100vh;
+				background: linear-gradient(135deg, #6a11cb 0%, #2575fc 100%);
+				font-family: Arial, sans-serif;
+			}
+			.status-card {
+				background: rgba(255, 255, 255, 0.1);
+				backdrop-filter: blur(10px);
+				padding: 50px;
+				border-radius: 25px;
+				width: 30%;
+				color: #fff;
+				text-align: center;
+				box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+			}
+			a {
+				display: inline-block;
+				background: #fff;
+				color: #6a11cb;
+				padding: 12px 25px;
+				border-radius: 25px;
+				text-decoration: none;
+				font-weight: bold;
+				margin-top: 20px;
+			}
+			a:hover { opacity: 0.9; }
+		</style>
+	</head>	
+	<body>
+		<div class="status-card">
+			<h2>{success ? "Success! 🎉" : "Verification Failed ❌"}</h2>
+			<p>{statusMessage}</p>
+			<a href="/">Go to Login</a>
+		</div>
+	</body>
+</html>
