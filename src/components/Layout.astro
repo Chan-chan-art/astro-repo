@@ -218,7 +218,7 @@
 
         const formData = new FormData(loginForm);
 
-        try {
+                try {
             const response = await fetch('/login-api', {
                 method: 'POST',
                 body: formData
@@ -227,24 +227,32 @@
             const data = await response.json();
 
             if (data.success) {
-                window.location.href = '/dashboard'; // Dynamic entry redirect
-            } else {
-                // If database auth fails (like wrong password), map it straight to our new inline blocks instead of annoying alert windows!
-                if (data.message.toLowerCase().includes("exist")) {
-									if (usernameField && usernameError) {
-                    usernameField.classList.add("invalid");
-										usernameError.textContent = data.message;
-									}
+                alert('Login successful!');
+                
+                // 🌟 DYNAMIC ROLE ROUTING: Send admins to /admin, others to /dashboard
+                if (data.role === 'admin') {
+                    window.location.href = '/admin';
                 } else {
-									if (passwordField && passwordError) {
-                    passwordField.classList.add("invalid");
-										passwordError.textContent = data.message;
-									}
+                    window.location.href = '/dashboard';
+                }
+            } else {
+                // Your existing error code handling goes here...
+                if (data.message.toLowerCase().includes("exist")) {
+                    if (usernameField && usernameError) {
+                        usernameField.classList.add("invalid");
+                        usernameError.textContent = data.message;
+                    }
+                } else {
+                    if (passwordField && passwordError) {
+                        passwordField.classList.add("invalid");
+                        passwordError.textContent = data.message;
+                    }
                 }
             }
         } catch (error) {
             alert("Failed to reach the authentication endpoint.");
         }
+
     });
 </script>
 

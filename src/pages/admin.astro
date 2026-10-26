@@ -1,0 +1,139 @@
+---
+// src/pages/admin.astro
+import { pool } from '../lib/db';
+export const prerender = false;
+
+// 1. Grab your cookie session object securely
+const sessionCookie = Astro.cookies.get("user_session");
+const sessionData = sessionCookie ? sessionCookie.json() : null;
+
+// Validate absolute Admin Authority Level Access
+if (!sessionData || sessionData.role !== 'admin') {
+  return Astro.redirect('/'); // Kick them out instantly if they don't have an admin rank
+}
+
+// 🌟 FIX: Declare 'adminUsername' cleanly from your JSON session data object
+const adminUsername = sessionData.username || "Admin";
+
+let applicants: any[] = [];
+
+try {
+  // Fetch every user's application details, joining users and admissions table models cleanly
+  const [rows]: any = await pool.execute(
+    'SELECT a.id as admission_id, u.username, u.email, u.display_name, a.course_name, a.application_status, a.document_url FROM users u INNER JOIN admissions a ON u.id = a.user_id ORDER BY a.submitted_at DESC'
+  );
+  applicants = rows;
+} catch (error) {
+  console.error("Admin Dashboard Query Error:", error);
+}
+---
+
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width" />
+		<title>Admin Board Panel</title>
+		<style>
+			body {
+				margin: 0; display: flex; justify-content: center; align-items: center; min-height: 100vh;
+				background: linear-gradient(135deg, #141e30 0%, #243b55 100%); 
+				font-family: Arial, sans-serif; color: #fff; padding: 40px; box-sizing: border-box;
+			}
+			.admin-card {
+				background: rgba(255, 255, 255, 0.08); backdrop-filter: blur(12px); padding: 45px;
+				border-radius: 25px; box-shadow: 0 8px 32px 0 rgba(0,0,0,0.5); width: 85%; max-width: 1200px;
+			}
+			table { width: 100%; border-collapse: collapse; margin-top: 25px; text-align: left; font-size: 14px; }
+			th { background: rgba(255,255,255,0.15); padding: 14px; border-bottom: 2px solid rgba(255,255,255,0.2); }
+			td { padding: 14px; border-bottom: 1px solid rgba(255,255,255,0.1); background: rgba(255,255,255,0.02); }
+			
+			select {
+				padding: 8px 12px; border-radius: 15px; border: none; background: rgba(255,255,255,0.2);
+				color: #fff; font-weight: bold; cursor: pointer; outline: none;
+			}
+			select option { background: #243b55; color: #fff; }
+			
+			.doc-link { color: #00e676; text-decoration: none; font-weight: bold; }
+			.btn-logout {
+				background: #ff4b5c; color: #fff; padding: 10px 20px; border-radius: 20px;
+				border: none; cursor: pointer; font-weight: bold; margin-top: 25px; float: right;
+			}
+		</style>
+	</head>	
+	<body>
+		<div class="admin-card">
+			<h2 style="margin:0;">⚙️ Admission Management Admin Panel</h2>
+			<p style="color: rgba(255,255,255,0.6);">Logged in as Principal Authority: <strong>{adminUsername}</strong></p>
+			
+			<table>
+				<thead>
+					<tr>
+						<th>Applicant Name</th>
+						<th>Email</th>
+						<th>Course Selection</th>
+						<th>Transcript Files</th>
+						<th>Actions (Manage Status)</th>
+					</tr>
+				</thead>
+				<tbody>
+					{applicants.length === 0 ? (
+						<tr><td colspan="5" style="text-align:center; padding: 40px; color:rgba(255,255,255,0.4);">No student applications registered inside the intake database lines yet.</td></tr>
+					) : (
+						applicants.map((student) => (
+							<tr>
+								<td><strong>{student.display_name || student.username}</strong></td>
+								<td>{student.email}</td>
+								<td>{student.course_name}</td>
+								<td>
+									{student.document_url ? (
+										<a href={student.document_url} target="_blank" class="doc-link">📄 Open Document File</a>
+									) : (
+										<span style="color:rgba(255,255,255,0.4);">No file attached</span>
+									)}
+								</td>
+								<td>
+									<select class="status-selector" data-id={student.admission_id}>
+										<option value="Pending Review" selected={student.application_status === 'Pending Review'}>Pending Review</option>
+										<option value="Under Review" selected={student.application_status === 'Under Review'}>Under Review</option>
+										<option value="Accepted" selected={student.application_status === 'Accepted'}>Accepted</option>
+										<option value="Rejected" selected={student.application_status === 'Rejected'}>Rejected</option>
+									</select>
+								</td>
+							</tr>
+						))
+					)}
+				</tbody>
+			</table>
+
+			<form action="/logout-api" method="POST">
+				<button type="submit" class="btn-logout">Log Out Control</button>
+			</form>
+		</div>
+
+		<script>
+			document.querySelectorAll(".status-selector").forEach(selector => {
+				selector.addEventListener("change", async () => {
+					const selectElement = selector as HTMLSelectElement;
+					const admissionId = selectElement.getAttribute("data-id");
+					const statusValue = selectElement.value;
+
+					const formData = new FormData();
+					if (admissionId) formData.append("admissionId", admissionId);
+					formData.append("status", statusValue);
+
+					try {
+						const res = await fetch('/admin-api', {
+							method: 'POST',
+							body: formData
+						});
+						const data = await res.json();
+						if (!data.success) alert(data.message);
+					} catch {
+						alert("Failed to push administration state change query.");
+					}
+				});
+			});
+		</script>
+	</body>
+</html>

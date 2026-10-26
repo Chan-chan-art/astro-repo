@@ -3,32 +3,54 @@
 import { pool } from '../lib/db';
 export const prerender = false;
 
-// 1. Verify session cookie status
 const sessionCookie = Astro.cookies.get("user_session");
-if (!sessionCookie) {
+let sessionData = null; // Only declare sessionData ONCE here
+
+// Safely evaluate the cookie string before parsing it
+if (sessionCookie && sessionCookie.value.trim() !== "") {
+  try {
+    sessionData = sessionCookie.json();
+  } catch (e) {
+    console.error("Invalid session cookie JSON format structural fault:", e);
+    Astro.cookies.delete("user_session"); 
+  }
+}
+
+// Kick them out if no valid session data is present
+if (!sessionData || !sessionData.username) {
   return Astro.redirect('/'); 
 }
-const username = sessionCookie.value;
 
-// 2. Fetch the user's profile data, including their avatar
+const username = sessionData.username; // Only declare username ONCE here
+
 let displayName = "";
 let bio = "";
 let address = "";
 let avatarUrl = "/default-avatar.png";
+let userNotes: any[] = [];
 
 try {
-  const [rows]: any = await pool.execute(
-    'SELECT display_name, bio, address, avatar_url FROM users WHERE BINARY username = ?',
+  // 1. Fetch User Profile
+  const [userRows]: any = await pool.execute(
+    'SELECT id, display_name, bio, address, avatar_url FROM users WHERE BINARY username = ?',
     [username]
   );
-  if (rows.length === 1) {
-    displayName = rows[0].display_name || "";
-    bio = rows[0].bio || "";
-    address = rows[0].address || "";
-    avatarUrl = rows[0].avatar_url || "/default-avatar.png";
+  if (userRows.length === 1) {
+    displayName = userRows[0].display_name || "";
+    bio = userRows[0].bio || "";
+    address = userRows[0].address || "";
+    avatarUrl = userRows[0].avatar_url || "/default-avatar.png";
+    const userId = userRows[0].id;
+
+    // 2. Fetch only THIS user's private notes
+    const [noteRows]: any = await pool.execute(
+      'SELECT id, title, content, DATE_FORMAT(created_at, "%b %d, %Y") as date FROM notes WHERE user_id = ? ORDER BY id DESC',
+      [userId]
+    );
+    userNotes = noteRows;
   }
 } catch (error) {
-  console.error("Dashboard Data Fetch Error:", error);
+  console.error("Dashboard Fetch Error:", error);
 }
 
 const greetingName = displayName || username;
@@ -39,7 +61,7 @@ const greetingName = displayName || username;
 	<head>
 		<meta charset="utf-8" />
 		<meta name="viewport" content="width=device-width" />
-		<title>Dashboard</title>
+		<title>Dashboard Portal</title>
 		<style>
 			body {
 				margin: 0;
@@ -50,178 +72,181 @@ const greetingName = displayName || username;
 				background: linear-gradient(135deg, #6a11cb 0%, #2575fc 100%);
 				font-family: Arial, sans-serif;
 				color: #fff;
-				padding: 40px 0;
+				padding: 40px;
 				box-sizing: border-box;
 			}
-			.dashboard-card {
+			/* 🌟 Expanded Split Grid Layout Wrapper */
+			.dashboard-container {
+				display: grid;
+				grid-template-columns: 1fr 1.5fr; /* Left section smaller, right workspace wider */
+				gap: 30px;
+				width: 75%;
+				max-width: 1200px;
+			}
+			.glass-card {
 				background: rgba(255, 255, 255, 0.1);
 				backdrop-filter: blur(10px);
-				padding: 40px 50px;
+				padding: 35px;
 				border-radius: 25px;
-				text-align: center;
 				box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
-				width: 30%;
 				box-sizing: border-box;
 			}
-			h1 { margin-top: 10px; margin-bottom: 5px; font-size: 26px; }
-			p { color: rgba(255, 255, 255, 0.8); margin-bottom: 25px; font-size: 14px; }
+			.profile-card { text-align: center; height: fit-content; }
+			.avatar-preview { width: 100px; height: 100px; border-radius: 50%; object-fit: cover; border: 3px solid rgba(255, 255, 255, 0.4); }
 			
-			/* 🌟 Avatar Styling */
-			.avatar-container {
-				position: relative;
-				display: inline-block;
-				margin-bottom: 10px;
-			}
-			.avatar-preview {
-				width: 110px;
-				height: 110px;
-				border-radius: 50%;
-				object-fit: cover;
-				border: 3px solid rgba(255, 255, 255, 0.4);
-				box-shadow: 0 4px 15px rgba(0, 0, 0, 0.2);
-			}
-			
-			.form-box {
-				margin-top: 20px;
-				padding-top: 20px;
-				border-top: 1px solid rgba(255, 255, 255, 0.2);
-				text-align: left;
-			}
-			.form-box h3 { text-align: center; margin-top: 0; margin-bottom: 15px; font-size: 18px; }
-			
-			label { font-size: 12px; font-weight: bold; color: rgba(255, 255, 255, 0.9); margin-left: 5px; }
+			.form-box { margin-top: 20px; padding-top: 20px; border-top: 1px solid rgba(255, 255, 255, 0.2); }
+			label { font-size: 11px; font-weight: bold; display: block; margin-top: 10px; }
 			input, textarea {
-				width: 100%;
-				padding: 12px;
-				margin: 6px 0 14px 0;
-				border: none;
-				border-radius: 25px;
-				background: rgba(255, 255, 255, 0.2);
-				color: #fff;
-				outline: none;
-				box-sizing: border-box;
-				font-family: Arial, sans-serif;
+				width: 100%; padding: 11px; margin: 5px 0 10px 0; border: none; border-radius: 20px;
+				background: rgba(255, 255, 255, 0.2); color: #fff; outline: none; box-sizing: border-box; font-family: Arial;
 			}
-			textarea { border-radius: 15px; resize: none; height: 70px; }
-			input[type="file"] {
-				background: transparent;
-				padding: 5px;
-				font-size: 12px;
-			}
+			textarea { border-radius: 15px; resize: none; height: 60px; }
 			
-			button { padding: 12px 15px; border-radius: 25px; cursor: pointer; font-weight: bold; border: none; width: 100%; transition: opacity 0.2s; }
-			.btn-submit { background: #fff; color: #6a11cb; margin-top: 5px; }
+			button { padding: 11px; border-radius: 20px; cursor: pointer; font-weight: bold; border: none; width: 100%; }
+			.btn-submit { background: #fff; color: #6a11cb; }
 			.btn-logout { background: rgba(255, 255, 255, 0.15); color: #fff; margin-top: 15px; border: 1px solid rgba(255, 255, 255, 0.2); }
-			button:hover { opacity: 0.9; }
+			
+			/* 🌟 Notepad Display Layout */
+			.note-item {
+				background: rgba(255, 255, 255, 0.15);
+				padding: 15px 20px;
+				border-radius: 15px;
+				margin-top: 15px;
+				position: relative;
+				border-left: 4px solid #fff;
+			}
+			.note-item h4 { margin: 0 0 5px 0; font-size: 16px; width: 90%; }
+			.note-item p { margin: 0; color: rgba(255, 255, 255, 0.8); font-size: 13px; line-height: 1.4; }
+			.note-date { font-size: 10px; color: rgba(255, 255, 255, 0.5); display: block; margin-top: 8px; }
+			.btn-delete-note {
+				position: absolute; top: 15px; right: 15px; background: transparent; color: rgba(255,255,255,0.6);
+				border: none; cursor: pointer; font-size: 14px; width: auto; padding: 0;
+			}
+			.btn-delete-note:hover { color: #ff4b5c; }
 		</style>
 	</head>	
 
 	<body>
-		<div class="dashboard-card">
-			<!-- 🌟 Dynamic Avatar Display Window -->
-			<div class="avatar-container">
-				<img src={avatarUrl} alt="Avatar" class="avatar-preview" id="avatarImage" />
-			</div>
-
-			<h1>Welcome, {greetingName}! 👋</h1>
-			<p>Your full security profile control station.</p>
+		<div class="dashboard-container">
 			
-			<!-- 🌟 PROFILE INFO FORM WITH MULTIPART FOR FILES -->
-			<div class="form-box">
-				<h3>Edit Profile Info</h3>
-				<form id="profileForm" enctype="multipart/form-data">
-					<label for="avatarFile">Upload New Avatar Photo</label>
-					<input type="file" id="avatarFile" name="avatarFile" accept="image/*" />
+			<!-- LEFT SIDEBAR: PROFILE & CONTROLS -->
+			<div class="glass-card profile-card">
+				<img src={avatarUrl} alt="Avatar" class="avatar-preview" />
+				<h1 style="font-size:22px; margin: 10px 0 2px 0;">{greetingName}</h1>
+				<p style="font-size:12px; margin-bottom:15px;">Profile Station</p>
+				
+				<div class="form-box" style="text-align: left;">
+					<form id="profileForm" enctype="multipart/form-data">
+						<label>Avatar Photo</label>
+						<input type="file" name="avatarFile" accept="image/*" style="background:transparent; font-size:11px;" />
+						<label>Display Name</label>
+						<input type="text" name="displayName" value={displayName} />
+						<label>Location</label>
+						<input type="text" name="address" value={address} />
+						<label>Bio</label>
+						<textarea name="bio">{bio}</textarea>
+						<button type="submit" class="btn-submit">Save Profile</button>
+					</form>
+				</div>
 
-					<label for="displayName">Display Name</label>
-					<input type="text" id="displayName" name="displayName" value={displayName} placeholder="Choose a public display name" />
-
-					<label for="address">Location Address</label>
-					<input type="text" id="address" name="address" value={address} placeholder="City, Country" />
-
-					<label for="bio">About Me (Bio)</label>
-					<textarea id="bio" name="bio" placeholder="Write a short summary about yourself...">{bio}</textarea>
-
-					<button type="submit" class="btn-submit">Save Profile Changes</button>
+				<form action="/logout-api" method="POST">
+    		<button type="submit" class="btn-logout">Log Out</button>
 				</form>
+        </div>
+			
+
+			<!-- RIGHT SIDEBAR: INTERACTIVE WORKSPACE NOTEPAD -->
+			<div class="glass-card">
+				<h2 style="margin-top:0; border-bottom: 1px solid rgba(255,255,255,0.2); padding-bottom:10px;">📋 Personal Notepad Workspace</h2>
+				
+				<!-- Add Note Sub-Form -->
+				<form id="addNoteForm" style="display:grid; grid-template-columns: 1fr 2fr auto; gap: 10px; align-items: end; margin-top:15px;">
+					<div>
+						<label style="margin-top:0;">Note Title</label>
+						<input type="text" id="noteTitle" name="title" placeholder="Meeting..." required style="margin:5px 0 0 0;" />
+					</div>
+					<div>
+						<label style="margin-top:0;">What are you thinking?</label>
+						<input type="text" id="noteContent" name="content" placeholder="Remember to review the database records..." required style="margin:5px 0 0 0;" />
+					</div>
+					<button type="submit" class="btn-submit" style="height:40px; width:90px;">Add Note</button>
+				</form>
+
+				<!-- Dynamic Rendered Notes Feed List -->
+				<div style="margin-top: 20px; max-height: 400px; overflow-y: auto; padding-right:5px;">
+					{userNotes.length === 0 ? (
+						<p style="text-align:center; color:rgba(255,255,255,0.5); margin-top:40px;">Your workspace is empty. Type a note above to store it safely!</p>
+					) : (
+						userNotes.map((note) => (
+							<div class="note-item">
+								<h4>{note.title}</h4>
+								<p>{note.content}</p>
+								<span class="note-date">🗓️ Saved on {note.date}</span>
+								<button class="btn-delete-note" data-id={note.id}>✕</button>
+							</div>
+						))
+					)}
+				</div>
 			</div>
 
-			<!-- Place this inside the dashboard-card right below your Profile Form block -->
-<div class="form-box" style="margin-top: 25px; padding-top: 25px; border-top: 1px solid rgba(255, 75, 92, 0.3);">
-    <h3 style="color: #ff4b5c; text-align: center; margin-top: 0; margin-bottom: 10px;">Danger Zone</h3>
-    <p style="font-size: 13px; color: rgba(255, 255, 255, 0.7); text-align: center; margin-bottom: 15px;">
-        Deleting your account is permanent. All your data and files will be wiped completely.
-    </p>
-    <button id="deleteAccountBtn" style="background: #ff4b5c; color: #fff;">Delete Account Permanently</button>
-</div>
-			<!-- Log Out Button Trigger -->
-			<form action="/logout-api" method="POST">
-				<button type="submit" class="btn-logout">Log Out</button>
-			</form>
 		</div>
 
+		<!-- CLIENT SIDE INTERACTIVE CONTROLLERS -->
 		<script>
 			const profileForm = document.getElementById("profileForm") as HTMLFormElement | null;
-			const avatarFile = document.getElementById("avatarFile") as HTMLInputElement | null;
-			const avatarImage = document.getElementById("avatarImage") as HTMLImageElement | null;
+			const addNoteForm = document.getElementById("addNoteForm") as HTMLFormElement | null;
 
-			// Optional UX: Show instant local picture preview when user chooses a file
-			avatarFile?.addEventListener("change", () => {
-				if (avatarFile?.files && avatarFile.files[0] && avatarImage) {
-					avatarImage.src = URL.createObjectURL(avatarFile.files[0]);
-				}
+			// Handle Note Submission
+			addNoteForm?.addEventListener("submit", async (e) => {
+				e.preventDefault();
+				const formData = new FormData(addNoteForm);
+				try {
+					const res = await fetch('/notes-api', { method: 'POST', body: formData });
+					const data = await res.json();
+					if (data.success) window.location.reload();
+					else alert(data.message);
+				} catch { alert("Error reaching node workspace endpoint."); }
 			});
 
-			profileForm?.addEventListener("submit", async (event) => {
-				event.preventDefault();
+			// Handle Note Removal click tracking
+			document.querySelectorAll(".btn-delete-note").forEach(btn => {
+				btn.addEventListener("click", async () => {
+					const id = btn.getAttribute("data-id");
+					if (confirm("Permanently drop this note out of your workspace records?")) {
+						try {
+							const res = await fetch(`/notes-api?id=${id}`, { method: 'DELETE' });
+							const data = await res.json();
+							if (data.success) window.location.reload();
+						} catch { alert("Error deleting workspace entry."); }
+					}
+				});
+			});
+
+			// Re-use working dynamic profile code block handler 
+			profileForm?.addEventListener("submit", async (e) => {
+
+				// ... existing profileForm submit wrapper
+				e.preventDefault();
 				if (!profileForm) return;
 
 				const formData = new FormData(profileForm);
-
 				try {
-					const response = await fetch('/profile-api', {
-						method: 'POST',
-						body: formData
+					const res = await fetch('/profile-api', { 
+						method: 'POST', 
+						body: formData 
 					});
-
-					const data = await response.json();
-					alert(data.message);
-					
+					const data = await res.json();
 					if (data.success) {
-						window.location.reload(); 
+						window.location.reload();
+					} else {
+						alert(data.message || "Failed to update profile settings.");
 					}
-				} catch (error) {
-					alert("Failed to communicate with profile update gateway.");
+				} catch (err) { 
+					alert("Error reaching the profile workspace endpoint."); 
 				}
-			});
-
-			// Add this inside the script tag of src/pages/dashboard.astro
-const deleteAccountBtn = document.getElementById("deleteAccountBtn");
-
-deleteAccountBtn?.addEventListener("click", async () => {
-    // 🌟 Double confirmation pattern to protect user accounts from accidental misclicks
-    const firstConfirm = confirm("Are you absolutely sure you want to delete your account? This action cannot be undone.");
-    if (!firstConfirm) return;
-
-    const secondConfirm = confirm("FINAL WARNING: This will completely remove your profile data and delete your custom upload files from our server database. Proceed?");
-    if (!secondConfirm) return;
-
-    try {
-        const response = await fetch('/delete-account-api', {
-            method: 'POST'
-        });
-
-        const data = await response.json();
-        alert(data.message);
-
-        if (data.success) {
-            window.location.href = '/'; // Send them back to the clean entrance form on success
-        }
-    } catch (error) {
-        alert("Failed to communicate with the account destruction gateway.");
-    }
-});
-
+			}); // End of profileForm event listener
 		</script>
 	</body>
 </html>
+
+				

@@ -1,55 +1,72 @@
-// src/pages/register-api.ts
 import type { APIRoute } from 'astro';
 import { pool } from '../lib/db';
+import crypto from 'node:crypto'; // Native, built-in Node.js module
 
 export const prerender = false;
 
-export const POST: APIRoute = async ({ request }) => {
-  try {
-    const data = await request.formData();
-    const username = data.get("username")?.toString().trim();
-    const email = data.get("email")?.toString().trim();
-    const password = data.get("password")?.toString();
+// Secure hashing helper using native Node.js crypto
+function hashPasswordNative(password: string): string {
+  const salt = crypto.randomBytes(16).toString('hex');
+  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
+  return `${salt}:${hash}`;
+}
 
-    if (!username || !email || !password) {
-      return new Response(JSON.stringify({ success: false, message: "Please fill out all fields." }), { status: 400 });
+export const POST: APIRoute = async ({ request, cookies }) => {
+  try {
+    const formData = await request.formData();
+    
+    const displayName = formData.get("displayName")?.toString().trim();
+    const username = formData.get("username")?.toString().trim();
+    const password = formData.get("password")?.toString();
+
+    // 1. Validation Check
+    if (!displayName || !username || !password) {
+      return new Response(
+        JSON.stringify({ success: false, message: "Please fill out all fields." }), 
+        { status: 400 }
+      );
     }
 
-    // 1. Check if username or email already exists
+    // 2. Look for existing identical usernames
     const [existingUsers]: any = await pool.execute(
-      'SELECT id FROM users WHERE username = ? OR email = ?',
-      [username, email]
+      'SELECT id FROM users WHERE BINARY username = ?',
+      [username]
     );
 
     if (existingUsers.length > 0) {
-      return new Response(JSON.stringify({ success: false, message: "Username or Email is already taken." }), { status: 400 });
+      return new Response(
+        JSON.stringify({ success: false, message: "Username is already taken." }), 
+        { status: 409 }
+      );
     }
 
-    // 2. Encrypt the password using SHA-256
-    const { createHash, randomBytes } = await import('crypto');
-    const hashedPassword = createHash('sha256').update(password).digest('hex');
+    // 3. Hash securely using native scrypt
+    const secureHashedPassword = hashPasswordNative(password);
 
-    // 3. 🌟 GENERATE VERIFICATION TOKEN
-    const verificationToken = randomBytes(20).toString('hex');
+    // 4. Generate a unique placeholder email to bypass the database constraint
+    const placeholderEmail = `${username}_${Date.now()}@local.dev`;
 
-    // 4. Insert user as UNVERIFIED (is_verified = 0) with the token
+    // 5. Save into Database including the placeholder email field
     await pool.execute(
-      'INSERT INTO users (username, email, password, is_verified, verification_token) VALUES (?, ?, ?, 0, ?)',
-      [username, email, hashedPassword, verificationToken]
+      'INSERT INTO users (username, display_name, password, email) VALUES (?, ?, ?, ?)',
+      [username, displayName, secureHashedPassword, placeholderEmail]
     );
 
-    // 🌟 DEVELOPER LOG: Print the link directly to your terminal for local testing
-    console.log("\n✉️ [EMAIL VERIFICATION LINK GENERATED] ✉️");
-    console.log(`Click this link to verify the new account:\n`);
-    console.log(`http://localhost:4321/verify-email?token=${verificationToken}\n`);
+    // 6. Create login session cookie
+    cookies.set("user_session", JSON.stringify({ username }), {
+      path: "/",
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      maxAge: 60 * 60 * 24 * 7, 
+    });
 
-    return new Response(JSON.stringify({ 
-      success: true, 
-      message: "Registration successful! Please check your VS Code terminal console to click the verification link." 
-    }), { status: 201 });
+    return new Response(JSON.stringify({ success: true }), { status: 201 });
 
   } catch (error) {
-    console.error("Registration Error:", error);
-    return new Response(JSON.stringify({ success: false, message: "A database error occurred." }), { status: 500 });
+    console.error("Registration Processing Failure:", error);
+    return new Response(
+      JSON.stringify({ success: false, message: "Internal server processing error." }), 
+      { status: 500 }
+    );
   }
 };

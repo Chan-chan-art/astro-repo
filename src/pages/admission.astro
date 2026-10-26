@@ -1,0 +1,46 @@
+---
+// src/pages/admission.astro
+import { pool } from '../lib/db';
+export const prerender = false;
+
+const sessionCookie = Astro.cookies.get("user_session");
+let username = "Guest";
+let studentName = "Guest";
+let courseName = "Not Applied Yet";
+let applicationStatus = "No Active Application";
+let documentUrl = "";
+
+if (sessionCookie) {
+  try {
+    // 🌟 Defensive Parsing: Try reading as JSON first, fallback safely if it's a raw string
+    const sessionData = sessionCookie.json();
+    username = sessionData.username || "Guest";
+  } catch (e) {
+    username = sessionCookie.value || "Guest";
+  }
+  studentName = username;
+} else {
+  return Astro.redirect('/'); // Kick out if no cookie exists
+}
+
+try {
+  // Query database using the parsed clean username string
+  const [rows]: any = await pool.execute(
+    'SELECT u.display_name, a.course_name, a.application_status, a.document_url FROM users u LEFT JOIN admissions a ON u.id = a.user_id WHERE BINARY u.username = ?',
+    [username]
+  );
+  
+  if (rows.length > 0) {
+    if (rows[0].display_name) studentName = rows[0].display_name;
+    if (rows[0].course_name) courseName = rows[0].course_name;
+    if (rows[0].application_status) applicationStatus = rows[0].application_status;
+    if (rows[0].document_url) documentUrl = rows[0].document_url;
+  }
+} catch (error) {
+  console.error("Admission Fetch Error:", error);
+}
+
+let statusColor = "#ffb020";
+if (applicationStatus.toLowerCase().includes("accept")) statusColor = "#00e676";
+if (applicationStatus.toLowerCase().includes("reject")) statusColor = "#ff4b5c";
+---
