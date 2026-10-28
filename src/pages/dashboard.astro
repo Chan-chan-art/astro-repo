@@ -63,37 +63,105 @@ const greetingName = displayName || username;
 		<meta name="viewport" content="width=device-width" />
 		<title>Dashboard Portal</title>
 		<style>
-			body {
-				margin: 0;
-				display: flex;
-				justify-content: center;
-				align-items: center;
-				min-height: 100vh;
-				background: linear-gradient(135deg, #6a11cb 0%, #2575fc 100%);
-				font-family: Arial, sans-serif;
-				color: #fff;
-				padding: 40px;
-				box-sizing: border-box;
-			}
-			/* 🌟 Expanded Split Grid Layout Wrapper */
-			.dashboard-container {
-				display: grid;
-				grid-template-columns: 1fr 1.5fr; /* Left section smaller, right workspace wider */
-				gap: 30px;
-				width: 75%;
-				max-width: 1200px;
-			}
-			.glass-card {
-				background: rgba(255, 255, 255, 0.1);
-				backdrop-filter: blur(10px);
-				padding: 35px;
-				border-radius: 25px;
-				box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
-				box-sizing: border-box;
-			}
-			.profile-card { text-align: center; height: fit-content; }
+
+	body {
+	margin: 0;
+	display: flex;
+	justify-content: center;
+	align-items: flex-start; /* Switch from center to flex-start so long mobile pages scroll cleanly from the top down */
+	min-height: 100vh;
+	background: linear-gradient(135deg, #6a11cb 0%, #2575fc 100%);
+	font-family: Arial, sans-serif;
+	color: #fff;
+	padding: 15px; /* Compressed padding for mobile edge-clearance */
+	box-sizing: border-box;
+}
+
+@media (min-width: 768px) {
+	body {
+		padding: 40px; /* Expands to deeper workspace margins on regular desktop displays */
+		align-items: center; /* Re-center layout boxes vertically if content easily fits on wider aspect ratios */
+	}
+}
+
+			/* 🌟 Fully Adaptive Split Grid Layout Wrapper */
+.dashboard-container {
+	display: grid;
+	grid-template-columns: 1fr; /* Default: Stacks vertically into 1 column on mobile layout blocks */
+	gap: 25px;
+	width: 100%;
+	max-width: 1200px;
+	margin: 0 auto;
+	box-sizing: border-box;
+}
+
+/* 📱 Responsive break point: On tablets/laptops and wider screen layers, enable split layouts */
+@media (min-width: 992px) {
+	.dashboard-container {
+		grid-template-columns: 1fr 2fr; /* Profile sidebar is compact, workspace notepad gets maximum priority space */
+		gap: 30px;
+		width: 90%;
+	}
+}
+
+@media (min-width: 1200px) {
+	.dashboard-container {
+		width: 85%; /* Keeps content comfortably framed on large widescreen displays */
+	}
+}
+
+/* 🎨 Shared Base Adjustments for Glass Cards */
+.glass-card {
+	background: rgba(255, 255, 255, 0.1);
+	backdrop-filter: blur(12px);
+	-webkit-backdrop-filter: blur(12px);
+	padding: 25px; /* Slightly tighter internal padding optimized for mobile viewports */
+	border-radius: 25px;
+	box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+	border: 1px solid rgba(255, 255, 255, 0.12);
+	box-sizing: border-box;
+	width: 100%;
+}
+
+@media (min-width: 768px) {
+	.glass-card {
+		padding: 35px; /* Deepens padding room on wider displays for cleaner breathing space */
+	}
+}
+
+/* Left sidebar structural constraint normalization */
+.profile-card { 
+	text-align: center; 
+	height: fit-content; 
+	position: sticky;
+	top: 20px; /* Sticks the sidebar in place on desktop viewports when scrolling through long feeds of note cards */
+}
+
+@media (max-width: 991px) {
+	.profile-card {
+		position: static; /* Disables sticky tracking on mobile devices so it scrolls naturally with the document flow */
+	}
+}
+
+
 			.avatar-preview { width: 100px; height: 100px; border-radius: 50%; object-fit: cover; border: 3px solid rgba(255, 255, 255, 0.4); }
-			
+			.avatar-preview { 
+	width: 100px; 
+	height: 100px; 
+	border-radius: 50%; 
+	object-fit: cover; 
+	border: 3px solid rgba(255, 255, 255, 0.4);
+	transition: transform 0.2s ease, border-color 0.2s ease;
+}
+
+/* Signal editability when hovering over the profile sidebar picture */
+.avatar-preview:hover {
+	transform: scale(1.05);
+	border-color: #ffffff;
+	cursor: pointer;
+}
+
+
 			.form-box { margin-top: 20px; padding-top: 20px; border-top: 1px solid rgba(255, 255, 255, 0.2); }
 			label { font-size: 11px; font-weight: bold; display: block; margin-top: 10px; }
 			input, textarea {
@@ -106,23 +174,321 @@ const greetingName = displayName || username;
 			.btn-submit { background: #fff; color: #6a11cb; }
 			.btn-logout { background: rgba(255, 255, 255, 0.15); color: #fff; margin-top: 15px; border: 1px solid rgba(255, 255, 255, 0.2); }
 			
-			/* 🌟 Notepad Display Layout */
-			.note-item {
-				background: rgba(255, 255, 255, 0.15);
-				padding: 15px 20px;
-				border-radius: 15px;
-				margin-top: 15px;
-				position: relative;
-				border-left: 4px solid #fff;
-			}
-			.note-item h4 { margin: 0 0 5px 0; font-size: 16px; width: 90%; }
-			.note-item p { margin: 0; color: rgba(255, 255, 255, 0.8); font-size: 13px; line-height: 1.4; }
-			.note-date { font-size: 10px; color: rgba(255, 255, 255, 0.5); display: block; margin-top: 8px; }
-			.btn-delete-note {
-				position: absolute; top: 15px; right: 15px; background: transparent; color: rgba(255,255,255,0.6);
-				border: none; cursor: pointer; font-size: 14px; width: auto; padding: 0;
-			}
-			.btn-delete-note:hover { color: #ff4b5c; }
+/* 📋 Responsive Add Note Form Wrapper Grid */
+.add-note-form {
+	display: grid;
+	grid-template-columns: 1fr; /* Single column layout default for mobile devices */
+	gap: 15px;
+	margin-top: 15px;
+	background: rgba(255, 255, 255, 0.04);
+	border: 1px solid rgba(255, 255, 255, 0.08);
+	padding: 20px;
+	border-radius: 20px;
+	align-items: end;
+	box-sizing: border-box;
+}
+
+/* On medium devices (tablets/laptops), expand into two columns for inputs */
+@media (min-width: 600px) {
+	.add-note-form {
+		grid-template-columns: 1fr 1fr;
+	}
+	.form-group-full {
+		grid-column: span 2; /* Span across full row if needed */
+	}
+}
+
+/* On standard larger workspaces, transform into a smooth 3-column structural row */
+@media (min-width: 900px) {
+	.add-note-form {
+		grid-template-columns: 1.2fr 2fr auto; /* Title, text space, button width balance */
+	}
+	.form-group-full {
+		grid-column: span 1;
+	}
+}
+
+/* Refined input containers inside form workspace grids */
+.form-group {
+	display: flex;
+	flex-direction: column;
+	width: 100%;
+}
+
+.form-group label {
+	margin-top: 0 !important;
+	margin-bottom: 6px;
+	font-size: 11px;
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+	color: rgba(255, 255, 255, 0.7);
+}
+
+.form-group input {
+	margin: 0 !important; /* Overwrites old layout margins causing uneven offsets */
+	padding: 12px 16px;
+	border-radius: 15px;
+	background: rgba(255, 255, 255, 0.12);
+	border: 1px solid rgba(255, 255, 255, 0.1);
+	font-size: 14px;
+	transition: border-color 0.2s, background-color 0.2s;
+}
+
+.form-group input:focus {
+	border-color: #ffffff;
+	background: rgba(255, 255, 255, 0.2);
+}
+
+/* 🚀 Styled Action Submit Button matching form thickness */
+.btn-add-note {
+	height: 45px;
+	width: 100%;
+	border-radius: 15px !important;
+	background: #ffffff;
+	color: #6a11cb;
+	font-size: 14px;
+	font-weight: bold;
+	box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+	transition: transform 0.1s, opacity 0.2s;
+}
+
+@media (min-width: 900px) {
+	.btn-add-note {
+		width: 110px; /* Locks button container length cleanly on widescreen rows */
+	}
+}
+
+.btn-add-note:active {
+	transform: scale(0.97);
+}
+/* 🌟 Skeleton Loading Card Styles */
+.note-skeleton {
+	background: rgba(255, 255, 255, 0.05);
+	border: 1px solid rgba(255, 255, 255, 0.06);
+	padding: 20px;
+	border-radius: 18px;
+	min-height: 140px;
+	box-sizing: border-box;
+	display: flex;
+	flex-direction: column;
+	justify-content: space-between;
+	position: relative;
+	overflow: hidden;
+}
+
+/* Shimmer overlay block mapping */
+.note-skeleton::after {
+	content: "";
+	position: absolute;
+	top: 0; right: 0; bottom: 0; left: 0;
+	transform: translateX(-100%);
+	background: linear-gradient(
+		90deg,
+		rgba(255, 255, 255, 0) 0%,
+		rgba(255, 255, 255, 0.08) 20%,
+		rgba(255, 255, 255, 0.15) 60%,
+		rgba(255, 255, 255, 0) 100-30%
+	);
+	animation: shimmer 1.6s infinite;
+}
+
+@keyframes shimmer {
+	100% {
+		transform: translateX(100%);
+	}
+}
+
+/* Skeleton interior bone shapes */
+.skeleton-bone {
+	background: rgba(255, 255, 255, 0.12);
+	border-radius: 6px;
+}
+
+.bone-title {
+	width: 65%;
+	height: 16px;
+	margin-bottom: 12px;
+}
+
+.bone-text-1 {
+	width: 90%;
+	height: 12px;
+	margin-bottom: 8px;
+}
+
+.bone-text-2 {
+	width: 75%;
+	height: 12px;
+	margin-bottom: 15px;
+}
+
+.bone-date {
+	width: 40%;
+	height: 10px;
+	margin-top: auto;
+}
+
+/* Utility to smoothly fade out empty state messages */
+.fade-out {
+	opacity: 0;
+	transition: opacity 0.3s ease;
+}
+/* Live Input Counter Meta Labels */
+.char-counter {
+	font-size: 10px;
+	color: rgba(255, 255, 255, 0.4);
+	float: right; /* Automatically floats indicator text cleanly to the far right margin edge */
+	font-weight: normal;
+	letter-spacing: 0px;
+	transition: color 0.2s ease;
+}
+
+/* Warning accent state when approaching or hitting absolute database length thresholds */
+.char-counter.limit-reached {
+	color: #ff7675;
+	font-weight: bold;
+}
+/* 🗑️ Smooth Deletion Animation States */
+.note-item.removing {
+	opacity: 0;
+	transform: scale(0.9) translateY(10px);
+	max-height: 0;
+	padding-top: 0 !important;
+	padding-bottom: 0 !important;
+	margin-top: 0 !important;
+	margin-bottom: 0 !important;
+	border-color: transparent;
+	overflow: hidden;
+	transition: opacity 0.3s ease, 
+	            transform 0.3s ease, 
+	            max-height 0.3s cubic-bezier(0.4, 0, 0.2, 1), 
+	            padding 0.3s ease, 
+	            margin 0.3s ease;
+}
+/* 🔍 Glassmorphic Search Filter Workspace Input */
+.search-wrapper {
+	position: relative;
+	margin-top: 15px;
+	margin-bottom: 20px;
+	width: 100%;
+}
+
+.search-wrapper input {
+	width: 100%;
+	padding: 12px 16px 12px 42px !important; /* Extra left padding to make room for the search icon */
+	border-radius: 15px;
+	background: rgba(255, 255, 255, 0.06);
+	border: 1px solid rgba(255, 255, 255, 0.08);
+	color: #fff;
+	font-size: 14px;
+	outline: none;
+	box-sizing: border-box;
+	transition: border-color 0.2s, background-color 0.2s, box-shadow 0.2s;
+}
+
+.search-wrapper input:focus {
+	border-color: #ffffff;
+	background: rgba(255, 255, 255, 0.15);
+	box-shadow: 0 0 15px rgba(255, 255, 255, 0.1);
+}
+
+.search-icon {
+	position: absolute;
+	left: 15px;
+	top: 50%;
+	transform: translateY(-50%);
+	font-size: 14px;
+	opacity: 0.5;
+	pointer-events: none; /* Ensures clicking the icon focuses the text box behind it */
+}
+
+/* 🌀 Filtering CSS Utility States */
+.note-item {
+	/* Add transition timing definitions to your existing .note-item rules to make filtering feel smooth */
+	transition: transform 0.25s ease, box-shadow 0.25s ease, opacity 0.2s ease, scale 0.2s ease !important;
+}
+
+.note-item.filtered-out {
+	display: none !important; /* Hides cards immediately if they fail the query matching rules */
+}
+/* 🔔 Floating Notification Toast Design specs */
+.notification-toast {
+	position: fixed;
+	top: -70px; /* Positioned entirely off-screen by default */
+	left: 50%;
+	transform: translateX(-50%);
+	background: rgba(46, 204, 113, 0.2); /* Soft emerald green tint */
+	backdrop-filter: blur(14px);
+	-webkit-backdrop-filter: blur(14px);
+	border: 1px solid rgba(46, 204, 113, 0.4);
+	color: #fff;
+	padding: 14px 28px;
+	border-radius: 50px;
+	font-weight: bold;
+	font-size: 14px;
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+	z-index: 9999; /* Guarantees it floats over absolutely all layers */
+	transition: top 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 0.3s ease;
+	opacity: 0;
+}
+
+/* Activated dynamic styling flags */
+.notification-toast.toast-active {
+	top: 30px; /* Slides down comfortably from top window borders */
+	opacity: 1;
+}
+
+/* Error variations overlay overrides if save logic snaps */
+.notification-toast.toast-error {
+	background: rgba(231, 76, 60, 0.2);
+	border-color: rgba(231, 76, 60, 0.4);
+}
+/* ✕ Absolute Right-Aligned Search Clear Button */
+.btn-clear-search {
+	position: absolute;
+	right: 14px;
+	top: 50%;
+	transform: translateY(-50%);
+	background: rgba(255, 255, 255, 0.1);
+	color: rgba(255, 255, 255, 0.5);
+	border: none;
+	cursor: pointer;
+	font-size: 11px;
+	width: 20px;
+	height: 20px;
+	padding: 0;
+	border-radius: 50%;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	transition: background-color 0.2s, color 0.2s, transform 0.2s, opacity 0.2s;
+	opacity: 0; /* Hidden by default until user types */
+	pointer-events: none;
+}
+
+.btn-clear-search.is-visible {
+	opacity: 1;
+	pointer-events: auto; /* Re-enable click transactions when text exists */
+}
+
+.btn-clear-search:hover {
+	background: rgba(255, 255, 255, 0.25);
+	color: #fff;
+	transform: translateY(-50%) scale(1.08);
+}
+.char-counter {
+	font-size: 10px;
+	color: rgba(255, 255, 255, 0.4);
+	float: right;
+	font-weight: normal;
+	letter-spacing: 0px;
+	transition: color 0.2s ease;
+	line-height: 14px; /* Aligns smoothly with field headers */
+}
+
 		</style>
 	</head>	
 
@@ -130,123 +496,449 @@ const greetingName = displayName || username;
 		<div class="dashboard-container">
 			
 			<!-- LEFT SIDEBAR: PROFILE & CONTROLS -->
-			<div class="glass-card profile-card">
-				<img src={avatarUrl} alt="Avatar" class="avatar-preview" />
-				<h1 style="font-size:22px; margin: 10px 0 2px 0;">{greetingName}</h1>
-				<p style="font-size:12px; margin-bottom:15px;">Profile Station</p>
-				
-				<div class="form-box" style="text-align: left;">
-					<form id="profileForm" enctype="multipart/form-data">
-						<label>Avatar Photo</label>
-						<input type="file" name="avatarFile" accept="image/*" style="background:transparent; font-size:11px;" />
-						<label>Display Name</label>
-						<input type="text" name="displayName" value={displayName} />
-						<label>Location</label>
-						<input type="text" name="address" value={address} />
-						<label>Bio</label>
-						<textarea name="bio">{bio}</textarea>
-						<button type="submit" class="btn-submit">Save Profile</button>
-					</form>
-				</div>
+<div class="glass-card profile-card">
+	<img src={avatarUrl} alt="Avatar" class="avatar-preview" />
+	<h1 style="font-size:22px; margin: 10px 0 2px 0;">{greetingName}</h1>
+	<p style="font-size:12px; margin-bottom:15px;">Profile Station</p>
+	
+	<div class="form-box" style="text-align: left;">
+		<form id="profileForm" enctype="multipart/form-data">
+			<!-- 1. Avatar File Picker Group -->
+			<div class="form-group" style="margin-bottom: 12px;">
+				<label for="avatarFileInput">Avatar Photo</label>
+				<input 
+					type="file" 
+					id="avatarFileInput" 
+					name="avatarFile" 
+					accept="image/*" 
+					style="background:transparent; font-size:11px;" 
+				/>
+			</div>
 
-				<form action="/logout-api" method="POST">
-    		<button type="submit" class="btn-logout">Log Out</button>
-				</form>
-        </div>
-			
+			<!-- 2. Display Name Group -->
+			<div class="form-group" style="margin-bottom: 12px;">
+				<label for="profileDisplayName">Display Name</label>
+				<input 
+					type="text" 
+					id="profileDisplayName"
+					name="displayName" 
+					value={displayName} 
+				/>
+			</div>
+
+			<!-- 3. Location Group -->
+			<div class="form-group" style="margin-bottom: 12px;">
+				<label for="profileLocation">Location</label>
+				<input 
+					type="text" 
+					id="profileLocation"
+					name="address" 
+					value={address} 
+				/>
+			</div>
+
+			<!-- 4. Bio Textarea Group -->
+			<div class="form-group" style="margin-bottom: 12px;">
+				<label for="profileBio">
+					Bio 
+					<span class="char-counter" id="bioCounter">(0 / 250)</span>
+				</label>
+				<textarea id="profileBio" name="bio" maxlength="250" placeholder="Tell us about yourself...">{bio}</textarea>
+			</div>
+
+			<!-- 5. Submission Execution CTA -->
+			<button type="submit" class="btn-submit">Save Profile</button>
+		</form>
+	</div>
+	
+	<!-- Separate Secure Logout Action -->
+	<form action="/logout-api" method="POST">
+		<button type="submit" class="btn-logout">Log Out</button>
+	</form>
+</div>
 
 			<!-- RIGHT SIDEBAR: INTERACTIVE WORKSPACE NOTEPAD -->
 			<div class="glass-card">
 				<h2 style="margin-top:0; border-bottom: 1px solid rgba(255,255,255,0.2); padding-bottom:10px;">📋 Personal Notepad Workspace</h2>
 				
-				<!-- Add Note Sub-Form -->
-				<form id="addNoteForm" style="display:grid; grid-template-columns: 1fr 2fr auto; gap: 10px; align-items: end; margin-top:15px;">
-					<div>
-						<label style="margin-top:0;">Note Title</label>
-						<input type="text" id="noteTitle" name="title" placeholder="Meeting..." required style="margin:5px 0 0 0;" />
-					</div>
-					<div>
-						<label style="margin-top:0;">What are you thinking?</label>
-						<input type="text" id="noteContent" name="content" placeholder="Remember to review the database records..." required style="margin:5px 0 0 0;" />
-					</div>
-					<button type="submit" class="btn-submit" style="height:40px; width:90px;">Add Note</button>
-				</form>
+				<!-- Live Workspace Filter Query Bar -->
+<div class="search-wrapper">
+	<span class="search-icon">🔍</span>
+	<input 
+		type="text" 
+		id="workspaceSearch" 
+		placeholder="Search notes by title or content instantly..." 
+		aria-label="Search workspace notes"
+	/>
+	<!-- 🌟 ADDED THIS CLEAR BUTTON -->
+	<button type="button" id="clearSearchBtn" class="btn-clear-search" aria-label="Clear search input">✕</button>
+</div>
+
+
+				<!-- Add Note Sub-Form Grid -->
+<form id="addNoteForm" class="add-note-form">
+	<div class="form-group">
+		<label for="noteTitle">
+			Note Title 
+			<span class="char-counter" id="titleCounter">(0 / 30)</span>
+		</label>
+		<input 
+			type="text" 
+			id="noteTitle" 
+			name="title" 
+			placeholder="Meeting details..." 
+			maxlength="30"
+			required 
+		/>
+	</div>
+	
+	<div class="form-group">
+		<label for="noteContent">
+			What are you thinking? 
+			<span class="char-counter" id="contentCounter">(0 / 120)</span>
+		</label>
+		<input 
+			type="text" 
+			id="noteContent" 
+			name="content" 
+			placeholder="Remember to review the database..." 
+			maxlength="120"
+			required 
+		/>
+	</div>
+	
+	<button type="submit" class="btn-add-note">Add Note</button>
+</form>
+
 
 				<!-- Dynamic Rendered Notes Feed List -->
-				<div style="margin-top: 20px; max-height: 400px; overflow-y: auto; padding-right:5px;">
-					{userNotes.length === 0 ? (
-						<p style="text-align:center; color:rgba(255,255,255,0.5); margin-top:40px;">Your workspace is empty. Type a note above to store it safely!</p>
-					) : (
-						userNotes.map((note) => (
-							<div class="note-item">
-								<h4>{note.title}</h4>
-								<p>{note.content}</p>
-								<span class="note-date">🗓️ Saved on {note.date}</span>
-								<button class="btn-delete-note" data-id={note.id}>✕</button>
-							</div>
-						))
-					)}
-				</div>
-			</div>
-
+<div class="notes-grid">
+	{userNotes.length === 0 ? (
+		<div style="grid-column: 1 / -1; text-align:center; color:rgba(255,255,255,0.5); padding: 60px 20px;">
+			<span style="font-size: 40px; display:block; margin-bottom:10px;">📋</span>
+			<p style="margin:0;">Your workspace is empty. Type a note above to store it safely!</p>
 		</div>
+	) : (
+		userNotes.map((note) => (
+			<div class="note-item">
+				<button class="btn-delete-note" data-id={note.id} title="Delete this note">✕</button>
+				<div>
+					<h4>{note.title}</h4>
+					<p>{note.content}</p>
+				</div>
+				<span class="note-date">🗓️ {note.date}</span>
+			</div>
+		))
+	)}
+</div>
+	</div>
+		</div>
+
+		<!-- 🔔 Floating Glassmorphic Notification Toast Banner -->
+<div id="notificationToast" class="notification-toast" aria-live="polite">
+	<span id="toastIcon">✨</span>
+	<span id="toastMessage">Profile settings saved successfully!</span>
+</div>
+
 
 		<!-- CLIENT SIDE INTERACTIVE CONTROLLERS -->
 		<script>
-			const profileForm = document.getElementById("profileForm") as HTMLFormElement | null;
-			const addNoteForm = document.getElementById("addNoteForm") as HTMLFormElement | null;
+	// ==========================================
+	// 1. SCOPE INDEPENDENT UTILITY FUNCTIONS
+	// ==========================================
+	
+	// Secure escape helper to prevent cross-site script injections (XSS)
+	function escapeHTML(str: string): string {
+		return str.replace(/[&<>'"]/g, 
+			tag => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[tag] || tag)
+		);
+	}
 
-			// Handle Note Submission
-			addNoteForm?.addEventListener("submit", async (e) => {
-				e.preventDefault();
-				const formData = new FormData(addNoteForm);
+	// Re-binding listener to attach smooth delete animations to newly added cards
+	function attachDeleteListener(btn: Element | null) {
+		if (!btn) return;
+		btn.addEventListener("click", async () => {
+			const id = btn.getAttribute("data-id");
+			const cardItem = btn.closest(".note-item");
+			if (!id || !cardItem) return;
+
+			if (confirm("Permanently drop this note out of your workspace records?")) {
 				try {
-					const res = await fetch('/notes-api', { method: 'POST', body: formData });
-					const data = await res.json();
-					if (data.success) window.location.reload();
-					else alert(data.message);
-				} catch { alert("Error reaching node workspace endpoint."); }
-			});
-
-			// Handle Note Removal click tracking
-			document.querySelectorAll(".btn-delete-note").forEach(btn => {
-				btn.addEventListener("click", async () => {
-					const id = btn.getAttribute("data-id");
-					if (confirm("Permanently drop this note out of your workspace records?")) {
-						try {
-							const res = await fetch(`/notes-api?id=${id}`, { method: 'DELETE' });
-							const data = await res.json();
-							if (data.success) window.location.reload();
-						} catch { alert("Error deleting workspace entry."); }
-					}
-				});
-			});
-
-			// Re-use working dynamic profile code block handler 
-			profileForm?.addEventListener("submit", async (e) => {
-
-				// ... existing profileForm submit wrapper
-				e.preventDefault();
-				if (!profileForm) return;
-
-				const formData = new FormData(profileForm);
-				try {
-					const res = await fetch('/profile-api', { 
-						method: 'POST', 
-						body: formData 
-					});
+					cardItem.classList.add("removing");
+					const res = await fetch(`/notes-api?id=${id}`, { method: 'DELETE' });
 					const data = await res.json();
 					if (data.success) {
-						window.location.reload();
+						setTimeout(() => {
+							cardItem.remove();
+							const remainingCards = document.querySelectorAll(".note-item");
+							if (remainingCards.length === 0) {
+								window.location.reload();
+							}
+						}, 300);
 					} else {
-						alert(data.message || "Failed to update profile settings.");
+						cardItem.classList.remove("removing");
+						alert(data.message || "Failed to remove workspace entry.");
 					}
-				} catch (err) { 
-					alert("Error reaching the profile workspace endpoint."); 
+				} catch { 
+					cardItem.classList.remove("removing");
+					alert("Error deleting workspace entry."); 
 				}
-			}); // End of profileForm event listener
-		</script>
-	</body>
+			}
+		});
+	}
+
+	// ==========================================
+	// 2. FORM AND INTERFACE TARGET INITIALIZERS
+	// ==========================================
+	const profileForm = document.getElementById("profileForm") as HTMLFormElement | null;
+	const addNoteForm = document.getElementById("addNoteForm") as HTMLFormElement | null;
+	const avatarFileInput = document.getElementById("avatarFileInput") as HTMLInputElement | null;
+	const avatarPreviewImage = document.querySelector(".avatar-preview") as HTMLImageElement | null;
+	const inputTitle = document.getElementById("noteTitle") as HTMLInputElement | null;
+	const inputContent = document.getElementById("noteContent") as HTMLInputElement | null;
+	const titleCounter = document.getElementById("titleCounter");
+	const contentCounter = document.getElementById("contentCounter");
+	const profileBioInput = document.getElementById("profileBio") as HTMLTextAreaElement | null;
+	const bioCounter = document.getElementById("bioCounter");
+
+
+	// Attach initial deletion events to all static server-rendered notes on boot load
+	document.querySelectorAll(".btn-delete-note").forEach(btn => {
+		attachDeleteListener(btn);
+	});
+
+	// ==========================================
+	// 3. ACTION AND TRANSACTION EVENT LISTENERS
+	// ==========================================
+
+	// Handle Note Submission
+	addNoteForm?.addEventListener("submit", async (e) => {
+		e.preventDefault();
+
+		const notesGrid = document.querySelector(".notes-grid");
+		if (!notesGrid) return;
+
+		const emptyPrompt = notesGrid.querySelector("div");
+		if (emptyPrompt && emptyPrompt.textContent?.includes("Your workspace is empty")) {
+			emptyPrompt.remove();
+		}
+
+		const titleValue = inputTitle ? inputTitle.value.trim() : "";
+		const contentValue = inputContent ? inputContent.value.trim() : "";
+
+		// Append Shimmer Skeleton Placeholder Card
+		const skeletonHTML = `
+			<div class="note-item note-skeleton" id="activeCreationSkeleton">
+				<div>
+					<div class="skeleton-bone bone-title"></div>
+					<div class="skeleton-bone bone-text-1"></div>
+					<div class="skeleton-bone bone-text-2"></div>
+				</div>
+				<div class="skeleton-bone bone-date"></div>
+			</div>
+		`;
+		notesGrid.insertAdjacentHTML("afterbegin", skeletonHTML);
+
+		const formData = new FormData();
+		formData.append("title", titleValue);
+		formData.append("content", contentValue);
+
+		addNoteForm.reset();
+		if (titleCounter) titleCounter.textContent = "(0 / 30)";
+		if (contentCounter) contentCounter.textContent = "(0 / 120)";
+
+		try {
+			const res = await fetch('/notes-api', { method: 'POST', body: formData });
+			const data = await res.json();
+			const skeletonCard = document.getElementById("activeCreationSkeleton");
+
+			if (data.success && skeletonCard) {
+				skeletonCard.classList.remove("note-skeleton");
+				skeletonCard.removeAttribute("id");
+				skeletonCard.innerHTML = `
+					<button class="btn-delete-note" data-id="${data.id}" title="Delete this note">✕</button>
+					<div>
+						<h4>${escapeHTML(titleValue)}</h4>
+						<p>${escapeHTML(contentValue)}</p>
+					</div>
+					<span class="note-date">🗓️ Saved Just now</span>
+				`;
+				attachDeleteListener(skeletonCard.querySelector(".btn-delete-note"));
+			} else {
+				document.getElementById("activeCreationSkeleton")?.remove();
+				alert(data.message || "Failed to save note.");
+			}
+		} catch { 
+			document.getElementById("activeCreationSkeleton")?.remove();
+			alert("Error reaching node workspace endpoint."); 
+		}
+	});
+
+	// Select Search and Clear Button Elements
+const workspaceSearch = document.getElementById("workspaceSearch") as HTMLInputElement | null;
+const clearSearchBtn = document.getElementById("clearSearchBtn") as HTMLButtonElement | null;
+
+// Helper logic to execute text filtering layout updates
+function filterWorkspaceNotes(query: string) {
+	const noteCards = document.querySelectorAll(".notes-grid .note-item");
+
+	noteCards.forEach((card) => {
+		const titleText = card.querySelector("h4")?.textContent?.toLowerCase() || "";
+		const contentText = card.querySelector("p")?.textContent?.toLowerCase() || "";
+		const matchFound = titleText.includes(query) || contentText.includes(query);
+
+		if (matchFound) card.classList.remove("filtered-out");
+		else card.classList.add("filtered-out");
+	});
+
+	// Handle empty state tracking strings
+	const visibleCards = document.querySelectorAll(".notes-grid .note-item:not(.filtered-out)");
+	let noResultsMsg = document.getElementById("noSearchResultsMessage");
+
+	if (visibleCards.length === 0 && noteCards.length > 0) {
+		if (!noResultsMsg) {
+			document.querySelector(".notes-grid")?.insertAdjacentHTML("beforeend", `
+				<div id="noSearchResultsMessage" style="grid-column: 1 / -1; text-align:center; color:rgba(255,255,255,0.4); padding: 40px 20px;">
+					🔍 No notes match your search query string.
+				</div>
+			`);
+		}
+	} else {
+		noResultsMsg?.remove();
+	}
+}
+
+// 1. Upgrade input listener to control clear button visibility toggle states
+workspaceSearch?.addEventListener("input", () => {
+	const query = workspaceSearch.value.toLowerCase().trim();
+	
+	// Control dynamic clear button presence flag
+	if (workspaceSearch.value.length > 0) {
+		clearSearchBtn?.classList.add("is-visible");
+	} else {
+		clearSearchBtn?.classList.remove("is-visible");
+	}
+	
+	filterWorkspaceNotes(query);
+});
+
+// 2. Clear Button click action listener
+clearSearchBtn?.addEventListener("click", () => {
+	if (!workspaceSearch) return;
+
+	// Wipes text, hides button, and places the cursor right back in the field
+	workspaceSearch.value = "";
+	clearSearchBtn.classList.remove("is-visible");
+	workspaceSearch.focus();
+
+	// Reset grid layout so all workspace note cards fade back into view immediately
+	filterWorkspaceNotes("");
+});
+
+
+	// Input Character Countdown Metrics Helper Initializers
+	function setupLiveCounter(input: HTMLInputElement | null, counterEl: HTMLElement | null, maxLength: number) {
+		if (!input || !counterEl) return;
+		input.addEventListener("input", () => {
+			const currentLength = input.value.length;
+			counterEl.textContent = `(${currentLength} / ${maxLength})`;
+			if (currentLength >= maxLength) counterEl.classList.add("limit-reached");
+			else counterEl.classList.remove("limit-reached");
+		});
+	}
+	setupLiveCounter(inputTitle, titleCounter, 30);
+	setupLiveCounter(inputContent, contentCounter, 120);
+
+	// Boot load calculation: If a bio already exists from MySQL, update the counter on page load
+if (profileBioInput && bioCounter) {
+	const currentBioLength = profileBioInput.value.length;
+	bioCounter.textContent = `(${currentBioLength} / 250)`;
+	if (currentBioLength >= 250) bioCounter.classList.add("limit-reached");
+}
+
+// Map real-time typing listeners onto the profile bio textarea
+profileBioInput?.addEventListener("input", () => {
+	if (!bioCounter) return;
+	const currentLength = profileBioInput.value.length;
+	
+	bioCounter.textContent = `(${currentLength} / 250)`;
+	
+	if (currentLength >= 250) {
+		bioCounter.classList.add("limit-reached");
+	} else {
+		bioCounter.classList.remove("limit-reached");
+	}
+});
+
+
+	// Avatar Live File Preview Reader System
+	avatarFileInput?.addEventListener("change", () => {
+		const fileList = avatarFileInput.files;
+		if (!fileList || fileList.length === 0) return;
+		const targetedFile = fileList[0];
+
+		if (!targetedFile.type.startsWith("image/")) {
+			alert("Please choose a valid image file configuration (.png, .jpg, .webp).");
+			avatarFileInput.value = "";
+			return;
+		}
+
+		const fileStreamReader = new FileReader();
+		fileStreamReader.onload = (event) => {
+			const parsedResultString = event.target?.result;
+			if (avatarPreviewImage && typeof parsedResultString === "string") {
+				avatarPreviewImage.src = parsedResultString;
+			}
+		};
+		fileStreamReader.readAsDataURL(targetedFile);
+	});
+
+	avatarPreviewImage?.addEventListener("click", () => {
+		avatarFileInput?.click();
+	});
+
+	// Profile Save Notification Banner Toast Interceptor
+	profileForm?.addEventListener("submit", async (e) => {
+		e.preventDefault();
+		if (!profileForm) return;
+
+		const submitBtn = profileForm.querySelector("button[type='submit']") as HTMLButtonElement | null;
+		if (submitBtn) submitBtn.disabled = true;
+
+		const formData = new FormData(profileForm);
+		try {
+			const res = await fetch('/profile-api', { method: 'POST', body: formData });
+			const data = await res.json();
+
+			if (data.success) {
+				const enteredName = formData.get("displayName")?.toString().trim();
+				const h1Header = document.querySelector(".profile-card h1");
+				if (h1Header && enteredName) h1Header.textContent = enteredName;
+				showNotificationToast("✨ Profile details saved flawlessly!");
+			} else {
+				showNotificationToast("❌ " + (data.message || "Failed to update profile settings."), true);
+			}
+		} catch { 
+			showNotificationToast("❌ Error reaching profile workspace endpoint.", true);
+		} finally {
+			if (submitBtn) submitBtn.disabled = false;
+		}
+	});
+
+	function showNotificationToast(msg: string, isError: boolean = false) {
+		const toast = document.getElementById("notificationToast");
+		const toastText = document.getElementById("toastMessage");
+		if (!toast || !toastText) return;
+
+		toastText.textContent = msg;
+		if (isError) toast.classList.add("toast-error");
+		else toast.classList.remove("toast-error");
+
+		toast.classList.add("toast-active");
+		setTimeout(() => toast.classList.remove("toast-active"), 3500);
+	}
+</script>
+</body>
 </html>
 
 				

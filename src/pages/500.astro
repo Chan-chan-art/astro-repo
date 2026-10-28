@@ -1,0 +1,87 @@
+---
+// src/pages/500.astro
+export const prerender = false;
+
+// Read the error message passed dynamically by the middleware catcher if present
+const errorDescription = Astro.locals.errorMessage || "Our systems are experiencing an temporary connectivity disruption.";
+---
+
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width" />
+		<title>System Maintenance - Station Offline</title>
+		<style>
+			body {
+				margin: 0;
+				display: flex;
+				justify-content: center;
+				align-items: center;
+				min-height: 100vh;
+				background: linear-gradient(135deg, #2575fc 0%, #6a11cb 100%);
+				font-family: Arial, sans-serif;
+				color: #fff;
+				padding: 20px;
+				box-sizing: border-box;
+			}
+			.error-card {
+				background: rgba(255, 255, 255, 0.1);
+				backdrop-filter: blur(12px);
+				-webkit-backdrop-filter: blur(12px);
+				padding: 45px 35px;
+				border-radius: 25px;
+				box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
+				border: 1px solid rgba(255, 255, 255, 0.15);
+				max-width: 460px;
+				width: 100%;
+				text-align: center;
+				box-sizing: border-box;
+			}
+			.error-icon {
+				font-size: 55px;
+				margin-bottom: 15px;
+				display: block;
+				animation: pulse 2s infinite ease-in-out;
+			}
+			@keyframes pulse {
+				0%, 100% { transform: scale(1); opacity: 0.9; }
+				50% { transform: scale(1.06); opacity: 1; }
+			}
+			h1 {
+				font-size: 24px;
+				margin: 0 0 12px 0;
+				font-weight: bold;
+			}
+			p {
+				font-size: 14px;
+				color: rgba(255, 255, 255, 0.75);
+				line-height: 1.6;
+				margin: 0 0 25px 0;
+			}
+			.btn-action {
+				display: inline-block;
+				padding: 12px 30px;
+				border-radius: 20px;
+				background: #fff;
+				color: #6a11cb;
+				text-decoration: none;
+				font-weight: bold;
+				font-size: 14px;
+				box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+				transition: transform 0.1s;
+			}
+			.btn-action:active {
+				transform: scale(0.97);
+			}
+		</style>
+	</head>
+	<body>
+		<div class="error-card">
+			<span class="error-icon">📡</span>
+			<h1>Workspace Link Disconnected</h1>
+			<p>{errorDescription} Don't worry, your records are secure. Please try reconnecting below.</p>
+			<a href="/dashboard" class="btn-action">Retry Connection</a>
+		</div>
+	</body>
+</html>
