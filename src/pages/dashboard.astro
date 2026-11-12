@@ -4,56 +4,111 @@ import { pool } from '../lib/db';
 export const prerender = false;
 
 const sessionCookie = Astro.cookies.get("user_session");
-let sessionData = null; // Only declare sessionData ONCE here
+let sessionData = null;
 
-// Safely evaluate the cookie string before parsing it
 if (sessionCookie && sessionCookie.value.trim() !== "") {
   try {
     sessionData = sessionCookie.json();
   } catch (e) {
-    console.error("Invalid session cookie JSON format structural fault:", e);
+    console.error("Invalid session cookie JSON format:", e);
     Astro.cookies.delete("user_session"); 
   }
 }
 
-// Kick them out if no valid session data is present
 if (!sessionData || !sessionData.username) {
   return Astro.redirect('/'); 
 }
 
-const username = sessionData.username; // Only declare username ONCE here
+const username = sessionData.username;
 
 let displayName = "";
 let bio = "";
 let address = "";
 let avatarUrl = "/default-avatar.png";
+let userId: number | string | null = null;
 let userNotes: any[] = [];
 
 try {
-  // 1. Fetch User Profile
   const [userRows]: any = await pool.execute(
     'SELECT id, display_name, bio, address, avatar_url FROM users WHERE BINARY username = ?',
     [username]
   );
+  
   if (userRows.length === 1) {
     displayName = userRows[0].display_name || "";
     bio = userRows[0].bio || "";
     address = userRows[0].address || "";
     avatarUrl = userRows[0].avatar_url || "/default-avatar.png";
-    const userId = userRows[0].id;
+    
+    userId = userRows[0].id;
 
-    // 2. Fetch only THIS user's private notes
     const [noteRows]: any = await pool.execute(
-      'SELECT id, title, content, DATE_FORMAT(created_at, "%b %d, %Y") as date FROM notes WHERE user_id = ? ORDER BY id DESC',
-      [userId]
+      `SELECT 
+         n.id, n.title, n.content, n.category, n.user_id as owner_id,
+         DATE_FORMAT(n.created_at, "%b %d, %Y") as date,
+         u.display_name as owner_name,
+         COALESCE(np.is_pinned, 0) as is_pinned,
+         COALESCE(np.is_favorite, 0) as is_favorite,
+         IF(n.user_id = ?, 'owner', ns.permission_level) as user_role,
+         (
+           SELECT GROUP_CONCAT(shared_users.username SEPARATOR ', ')
+           FROM note_shares note_mapping
+           JOIN users shared_users ON note_mapping.shared_with_user_id = shared_users.id
+           WHERE note_mapping.note_id = n.id
+         ) as shared_users_list
+       FROM notes n
+       LEFT JOIN users u ON n.user_id = u.id
+       LEFT JOIN note_shares ns ON n.id = ns.note_id AND ns.shared_with_user_id = ?
+       LEFT JOIN note_preferences np ON np.note_id = n.id AND np.user_id = ?
+       WHERE n.user_id = ? OR ns.shared_with_user_id = ?
+       ORDER BY COALESCE(np.is_pinned, 0) DESC, n.id DESC`,
+      [userId, userId, userId, userId, userId]
     );
-    userNotes = noteRows;
+
+    if (noteRows.length > 0) {
+      const noteIds = noteRows.map((note: any) => note.id);
+      const placeholders = noteIds.map(() => "?").join(", ");
+      const [attachmentRows]: any = await pool.execute(
+        `SELECT id, note_id, attachment_type, original_name, mime_type,
+                file_size, latitude, longitude
+         FROM note_attachments
+         WHERE note_id IN (${placeholders})
+         ORDER BY id ASC`,
+        noteIds
+      );
+      const attachmentsByNote = new Map<string, any[]>();
+      for (const attachment of attachmentRows) {
+        const key = String(attachment.note_id);
+        const attachments = attachmentsByNote.get(key) || [];
+        attachments.push(attachment);
+        attachmentsByNote.set(key, attachments);
+      }
+      userNotes = noteRows.map((note: any) => ({
+        ...note,
+        attachments: attachmentsByNote.get(String(note.id)) || []
+      }));
+    } else {
+      userNotes = noteRows;
+    }
+
   }
 } catch (error) {
   console.error("Dashboard Fetch Error:", error);
 }
 
 const greetingName = displayName || username;
+const noteStatistics = userNotes.reduce(
+  (counts, note) => {
+    counts.total += 1;
+    const category = note.category || "General";
+    if (category === "General") counts.general += 1;
+    if (category === "Work") counts.work += 1;
+    if (category === "Personal") counts.personal += 1;
+    if (category === "Ideas") counts.ideas += 1;
+    return counts;
+  },
+  { total: 0, general: 0, work: 0, personal: 0, ideas: 0 }
+);
 ---
 
 <!doctype html>
@@ -129,6 +184,7 @@ const greetingName = displayName || username;
 	}
 }
 
+
 /* Left sidebar structural constraint normalization */
 .profile-card { 
 	text-align: center; 
@@ -177,34 +233,28 @@ const greetingName = displayName || username;
 /* 📋 Responsive Add Note Form Wrapper Grid */
 .add-note-form {
 	display: grid;
-	grid-template-columns: 1fr; /* Single column layout default for mobile devices */
-	gap: 15px;
-	margin-top: 15px;
+	grid-template-columns: minmax(0, 1fr);
+	gap: 14px;
+	margin-top: 18px;
 	background: rgba(255, 255, 255, 0.04);
 	border: 1px solid rgba(255, 255, 255, 0.08);
-	padding: 20px;
+	padding: 18px;
 	border-radius: 20px;
 	align-items: end;
 	box-sizing: border-box;
 }
 
-/* On medium devices (tablets/laptops), expand into two columns for inputs */
+/* Keep the action aligned with the category control on wider screens. */
 @media (min-width: 600px) {
 	.add-note-form {
-		grid-template-columns: 1fr 1fr;
-	}
-	.form-group-full {
-		grid-column: span 2; /* Span across full row if needed */
+		grid-template-columns: repeat(2, minmax(0, 1fr));
 	}
 }
 
-/* On standard larger workspaces, transform into a smooth 3-column structural row */
 @media (min-width: 900px) {
 	.add-note-form {
-		grid-template-columns: 1.2fr 2fr auto; /* Title, text space, button width balance */
-	}
-	.form-group-full {
-		grid-column: span 1;
+		column-gap: 16px;
+		row-gap: 16px;
 	}
 }
 
@@ -243,6 +293,7 @@ const greetingName = displayName || username;
 .btn-add-note {
 	height: 45px;
 	width: 100%;
+	margin: 0;
 	border-radius: 15px !important;
 	background: #ffffff;
 	color: #6a11cb;
@@ -250,12 +301,6 @@ const greetingName = displayName || username;
 	font-weight: bold;
 	box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
 	transition: transform 0.1s, opacity 0.2s;
-}
-
-@media (min-width: 900px) {
-	.btn-add-note {
-		width: 110px; /* Locks button container length cleanly on widescreen rows */
-	}
 }
 
 .btn-add-note:active {
@@ -373,6 +418,42 @@ const greetingName = displayName || username;
 	width: 100%;
 }
 
+.dashboard-statistics {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 10px;
+	margin-top: 16px;
+}
+
+.dashboard-stat-card {
+	min-width: 0;
+	padding: 12px;
+	border: 1px solid rgba(255, 255, 255, 0.12);
+	border-radius: 14px;
+	background: rgba(255, 255, 255, 0.07);
+	box-sizing: border-box;
+}
+
+.dashboard-stat-card strong {
+	display: block;
+	font-size: 20px;
+	line-height: 1.2;
+}
+
+.dashboard-stat-card span {
+	display: block;
+	margin-top: 4px;
+	color: rgba(255, 255, 255, 0.72);
+	font-size: 11px;
+	overflow-wrap: anywhere;
+}
+
+@media (min-width: 600px) {
+	.dashboard-statistics {
+		grid-template-columns: repeat(5, minmax(0, 1fr));
+	}
+}
+
 .search-wrapper input {
 	width: 100%;
 	padding: 12px 16px 12px 42px !important; /* Extra left padding to make room for the search icon */
@@ -404,8 +485,131 @@ const greetingName = displayName || username;
 
 /* 🌀 Filtering CSS Utility States */
 .note-item {
-	/* Add transition timing definitions to your existing .note-item rules to make filtering feel smooth */
+	position: relative;
+	display: flex;
+	flex-direction: column;
+	gap: 12px;
+	min-width: 0;
+	min-height: 170px;
+	padding: 18px;
+	border: 1px solid rgba(255, 255, 255, 0.12);
+	border-radius: 18px;
+	background: rgba(255, 255, 255, 0.07);
+	box-sizing: border-box;
 	transition: transform 0.25s ease, box-shadow 0.25s ease, opacity 0.2s ease, scale 0.2s ease !important;
+}
+
+.notes-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr));
+	gap: 16px;
+	margin-top: 20px;
+}
+
+.note-content {
+	min-width: 0;
+	padding-right: 28px;
+	overflow-wrap: anywhere;
+}
+
+.note-content h4 {
+	margin: 4px 0 8px;
+	font-size: 16px;
+	line-height: 1.4;
+}
+
+.note-content p {
+	margin: 0;
+	font-size: 14px;
+	line-height: 1.55;
+	white-space: pre-wrap;
+}
+
+.note-card-actions {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+	margin-top: 12px;
+}
+
+.note-card-actions button {
+	width: auto;
+	padding: 7px 12px;
+	border: 1px solid rgba(255, 255, 255, 0.18);
+	border-radius: 10px;
+	background: rgba(255, 255, 255, 0.1);
+	color: #fff;
+	font-size: 12px;
+}
+
+.note-card-actions button:hover {
+	background: rgba(255, 255, 255, 0.2);
+}
+
+.note-card-actions .btn-note-preference.is-active {
+	background: rgba(255, 215, 0, 0.22);
+	border-color: rgba(255, 215, 0, 0.55);
+}
+
+.note-card-actions button:disabled {
+	cursor: wait;
+	opacity: 0.65;
+}
+
+.note-date {
+	display: block;
+	margin-top: auto;
+	font-size: 12px;
+	color: rgba(255, 255, 255, 0.7);
+}
+
+.btn-delete-note {
+	position: absolute;
+	top: 12px;
+	right: 12px;
+	display: grid;
+	place-items: center;
+	width: 30px;
+	height: 30px;
+	min-width: 30px;
+	padding: 0;
+	border: 1px solid rgba(255, 255, 255, 0.2);
+	border-radius: 50%;
+	background: rgba(255, 118, 117, 0.18);
+	color: #fff;
+	font-size: 14px;
+	line-height: 1;
+}
+
+.btn-delete-note:hover {
+	background: rgba(255, 118, 117, 0.4);
+}
+
+.note-card-actions .btn-delete-note {
+	position: static;
+	display: inline-block;
+	width: auto;
+	height: auto;
+	min-width: 0;
+	padding: 7px 12px;
+	border-radius: 10px;
+	background: rgba(255, 118, 117, 0.18);
+	font-size: 12px;
+	line-height: normal;
+}
+
+.btn-share-note {
+	width: auto;
+	min-width: 88px;
+	padding: 8px 14px;
+	font-size: 12px;
+}
+
+.note-share-form button {
+	width: auto;
+	flex: 0 0 auto;
+	padding: 8px 12px;
+	font-size: 12px;
 }
 
 .note-item.filtered-out {
@@ -488,151 +692,1025 @@ const greetingName = displayName || username;
 	transition: color 0.2s ease;
 	line-height: 14px; /* Aligns smoothly with field headers */
 }
+/* 🧹 Profile Reset Action Button Layout */
+.btn-clear-profile {
+	background: rgba(255, 255, 255, 0.1);
+	color: rgba(255, 255, 255, 0.7);
+	border: 1px solid rgba(255, 255, 255, 0.15);
+	border-radius: 20px;
+	font-size: 13px;
+	font-weight: bold;
+	cursor: pointer;
+	transition: background-color 0.2s, color 0.2s, transform 0.1s;
+}
+
+.btn-clear-profile:hover {
+	background: rgba(231, 76, 60, 0.25); /* Fades into a translucent soft alert-red accent on mouse-over */
+	border-color: rgba(231, 76, 60, 0.4);
+	color: #fff;
+}
+
+.btn-clear-profile:active {
+	transform: scale(0.96);
+}
+/* 🏷️ Category Filter Navigation Row Layout */
+.category-tabs-bar {
+	display: flex;
+	gap: 10px;
+	margin-bottom: 20px;
+	overflow-x: auto;
+	padding-bottom: 5px;
+}
+.tab-btn {
+	background: rgba(255, 255, 255, 0.06);
+	border: 1px solid rgba(255, 255, 255, 0.1);
+	color: rgba(255, 255, 255, 0.7);
+	padding: 8px 16px;
+	border-radius: 30px;
+	font-size: 13px;
+	font-weight: 600;
+	cursor: pointer;
+	white-space: nowrap;
+	transition: background-color 0.2s, color 0.2s, border-color 0.2s;
+}
+.tab-btn:hover {
+	background: rgba(255, 255, 255, 0.15);
+	color: #fff;
+}
+.tab-btn.active {
+	background: #ffffff;
+	color: #6a11cb;
+	border-color: #ffffff;
+	box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+}
+
+/* 🎨 Glassmorphic Dropdown Select Input Field */
+.select-category {
+	padding: 12px 16px;
+	border-radius: 15px;
+	background: rgba(255, 255, 255, 0.12);
+	border: 1px solid rgba(255, 255, 255, 0.1);
+	color: #fff;
+	font-size: 14px;
+	outline: none;
+	width: 100%;
+	box-sizing: border-box;
+	cursor: pointer;
+}
+.select-category option {
+	background: #3a118c; /* Ensures dropdown content is readable over moving gradient patterns */
+	color: #fff;
+}
+
+.note-attachment-controls {
+	grid-column: 1 / -1;
+	display: flex;
+	flex-wrap: wrap;
+	gap: 8px;
+}
+
+.note-attachment-controls button {
+	width: auto;
+	padding: 9px 13px;
+	border: 1px solid rgba(255, 255, 255, 0.18);
+	background: rgba(255, 255, 255, 0.1);
+	color: #fff;
+	font-size: 12px;
+}
+
+.note-attachment-controls button:hover {
+	background: rgba(255, 255, 255, 0.2);
+}
+
+.note-attachment-input {
+	display: none;
+}
+
+.note-attachment-status {
+	grid-column: 1 / -1;
+	margin: -6px 0 0;
+	font-size: 12px;
+	color: rgba(255, 255, 255, 0.75);
+	overflow-wrap: anywhere;
+}
+
+.note-attachment-list {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	margin-top: 10px;
+	font-size: 12px;
+}
+
+.note-attachment-list a {
+	color: #d7c5ff;
+	overflow-wrap: anywhere;
+}
+
+.note-image-attachment,
+.comment-image-attachment {
+	display: inline-flex;
+	align-items: center;
+	gap: 8px;
+	max-width: 100%;
+}
+
+.attachment-preview-open {
+	display: inline-grid;
+	flex: 0 1 120px;
+	place-items: center;
+	width: min(120px, 38vw);
+	height: 88px;
+	min-width: 0;
+	padding: 0;
+	border: 1px solid rgba(255, 255, 255, 0.2);
+	border-radius: 8px;
+	background: rgba(255, 255, 255, 0.08);
+	cursor: pointer;
+	overflow: hidden;
+}
+
+.attachment-preview-open img {
+	display: block;
+	width: 100%;
+	height: 100%;
+	object-fit: contain;
+}
+
+.image-preview-dialog {
+	width: 94vw;
+	height: 94vh;
+	max-width: 94vw;
+	max-height: 94vh;
+	padding: 12px;
+	border: 1px solid rgba(255, 255, 255, 0.25);
+	border-radius: 14px;
+	background: #171126;
+	color: #fff;
+}
+
+.image-preview-dialog::backdrop {
+	background: rgba(0, 0, 0, 0.82);
+}
+
+.image-preview-dialog-content {
+	display: grid;
+	grid-template-rows: auto minmax(0, 1fr) auto;
+	gap: 10px;
+	height: 100%;
+}
+
+.image-preview-dialog-actions {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 10px;
+}
+
+.image-preview-dialog-actions button,
+.image-preview-dialog-actions a {
+	padding: 8px 12px;
+	border: 1px solid rgba(255, 255, 255, 0.25);
+	border-radius: 8px;
+	background: rgba(255, 255, 255, 0.1);
+	color: #fff;
+	text-decoration: none;
+	cursor: pointer;
+}
+
+.image-preview-dialog img {
+	display: block;
+	max-width: 100%;
+	max-height: 100%;
+	width: auto;
+	height: auto;
+	margin: auto;
+	object-fit: contain;
+}
+
+.note-dialog {
+	width: min(560px, 92vw);
+	max-width: 92vw;
+	max-height: 88vh;
+	padding: 20px;
+	border: 1px solid rgba(255, 255, 255, 0.22);
+	border-radius: 18px;
+	background: #21143b;
+	color: #fff;
+	box-sizing: border-box;
+}
+
+.note-dialog::backdrop {
+	background: rgba(0, 0, 0, 0.72);
+}
+
+.note-dialog-content {
+	display: grid;
+	gap: 14px;
+	max-height: calc(88vh - 40px);
+	overflow-y: auto;
+}
+
+.note-dialog-header,
+.note-dialog-actions {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 10px;
+}
+
+.note-dialog-header h2 {
+	margin: 0;
+	font-size: 20px;
+	overflow-wrap: anywhere;
+}
+
+.note-dialog button {
+	width: auto;
+	padding: 8px 12px;
+	border: 1px solid rgba(255, 255, 255, 0.22);
+	border-radius: 9px;
+	background: rgba(255, 255, 255, 0.12);
+	color: #fff;
+}
+
+.note-dialog button:hover {
+	background: rgba(255, 255, 255, 0.22);
+}
+
+.note-dialog-category {
+	width: fit-content;
+	margin: 0;
+}
+
+.note-dialog-body {
+	margin: 0;
+	line-height: 1.6;
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
+}
+
+.note-dialog-date {
+	color: rgba(255, 255, 255, 0.7);
+	font-size: 12px;
+}
+
+.note-edit-form {
+	display: grid;
+	gap: 12px;
+}
+
+.note-edit-form label {
+	margin: 0 0 6px;
+	color: rgba(255, 255, 255, 0.8);
+}
+
+.note-edit-form input,
+.note-edit-form textarea,
+.note-edit-form select {
+	width: 100%;
+	margin: 0;
+	padding: 10px 12px;
+	border: 1px solid rgba(255, 255, 255, 0.18);
+	border-radius: 10px;
+	background: rgba(255, 255, 255, 0.1);
+	color: #fff;
+	box-sizing: border-box;
+	font: inherit;
+}
+
+.note-edit-form textarea {
+	min-height: 110px;
+	resize: vertical;
+}
+
+.note-edit-form select option {
+	background: #21143b;
+	color: #fff;
+}
+
+.note-edit-error {
+	margin: 0;
+	color: #ffb4b4;
+	font-size: 13px;
+}
+
+/* 🏷️ Small Tag Badge indicator on top of cards */
+.note-tag-badge {
+	display: inline-block;
+	font-size: 10px;
+	font-weight: bold;
+	background: rgba(255, 255, 255, 0.15);
+	padding: 3px 8px;
+	border-radius: 10px;
+	margin-bottom: 8px;
+	text-transform: uppercase;
+	letter-spacing: 0.5px;
+	color: rgba(255, 255, 255, 0.8);
+}
+
+.note-share-badge {
+	display: inline-block;
+	margin: 0 0 8px 6px;
+	padding: 3px 8px;
+	border-radius: 10px;
+	background: rgba(106, 17, 203, 0.35);
+	font-size: 10px;
+}
+
+.note-share-controls {
+	margin-top: 12px;
+}
+
+.btn-share-note,
+.note-share-form button {
+	border: 1px solid rgba(255, 255, 255, 0.2);
+	border-radius: 10px;
+	padding: 7px 10px;
+	background: rgba(255, 255, 255, 0.12);
+	color: #fff;
+	cursor: pointer;
+	margin-left: 12px;
+}
+
+.note-share-form {
+	display: flex;
+	gap: 6px;
+	margin-top: 8px;
+}
+
+.note-share-form[hidden] {
+	display: none;
+}
+
+.note-share-form input {
+	min-width: 0;
+	width: 100%;
+	border: 1px solid rgba(255, 255, 255, 0.2);
+	border-radius: 10px;
+	padding: 8px;
+	background: rgba(255, 255, 255, 0.1);
+	color: #fff;
+}
+
+/* Tab filter state constraint utility */
+.note-item.tab-hidden {
+	display: none !important;
+}
+/* 🫨 CSS Shake Keyframe Animation Classes */
+.shake-warn {
+	animation: inputShake 0.4s ease-in-out !important;
+	border-color: #ff7675 !important;
+	box-shadow: 0 0 15px rgba(255, 118, 117, 0.4) !important;
+}
+
+@keyframes inputShake {
+	0%, 100% { transform: translateX(0); }
+	15%, 45%, 75% { transform: translateX(-6px); }
+	30%, 60%, 90% { transform: translateX(6px); }
+}
+
+/* 🔗 Shared With Card Footnote Styles */
+.note-shared-footnote {
+	font-size: 11px;
+	color: rgba(255, 255, 255, 0.5);
+	background: rgba(255, 255, 255, 0.04);
+	padding: 6px 10px;
+	border-radius: 8px;
+	margin-bottom: 8px;
+	border: 1px solid rgba(255, 255, 255, 0.05);
+	white-space: nowrap;
+	overflow: hidden;
+	text-overflow: ellipsis;
+}
+
+.note-activity {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px 12px;
+	margin-top: 8px;
+	font-size: 11px;
+	color: rgba(255, 255, 255, 0.72);
+}
+
+.activity-presence {
+	display: inline-flex;
+	align-items: center;
+	gap: 5px;
+}
+
+.activity-presence-dot {
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	background: rgba(255, 255, 255, 0.35);
+}
+
+.activity-presence.is-active .activity-presence-dot {
+	background: #55efc4;
+	box-shadow: 0 0 8px rgba(85, 239, 196, 0.75);
+}
+
+.note-read-receipt {
+	color: #55efc4;
+	font-weight: 600;
+}
+
+.chat-unread-badge {
+	display: inline-flex;
+	align-items: center;
+	justify-content: center;
+	min-width: 16px;
+	height: 16px;
+	padding: 0 4px;
+	border-radius: 999px;
+	background: #ff7675;
+	color: #fff;
+	font-size: 10px;
+	line-height: 1;
+	margin-left: 3px;
+}
+
+.chat-unread-badge[hidden] {
+	display: none;
+}
+
+.footnote-users {
+	color: #55efc4; /* Soft bright mint green color highlight for active shares */
+	font-weight: 600;
+}
+
+/* 💬 Micro-Chat Component Drawer Layout */
+.comment-drawer {
+	max-height: 0;
+	overflow: hidden;
+	transition: max-height 0.3s cubic-bezier(0.4, 0, 0.2, 1), margin-top 0.3s ease;
+	background: rgba(0, 0, 0, 0.15);
+	border-radius: 12px;
+	box-sizing: border-box;
+}
+
+.comment-drawer.drawer-open {
+	max-height: 280px;
+	margin-top: 15px;
+	padding: 12px;
+	border: 1px solid rgba(255, 255, 255, 0.06);
+	display: flex;
+	flex-direction: column;
+}
+
+.comment-list-feed {
+	min-height: 0;
+	max-height: 170px;
+	flex: 1 1 auto;
+	overflow-y: auto;
+	margin-bottom: 10px;
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	padding-right: 4px;
+	overscroll-behavior: contain;
+	scrollbar-width: thin;
+	scrollbar-color: rgba(255, 255, 255, 0.35) transparent;
+}
+
+.comment-list-feed::-webkit-scrollbar {
+	width: 6px;
+}
+
+.comment-list-feed::-webkit-scrollbar-thumb {
+	background: rgba(255, 255, 255, 0.35);
+	border-radius: 6px;
+}
+
+/* Individual micro-chat message bubble boxes */
+.comment-bubble {
+	align-self: stretch;
+	width: 100%;
+	box-sizing: border-box;
+	background: rgba(255, 255, 255, 0.06);
+	padding: 6px 10px;
+	border-radius: 8px;
+	font-size: 12px;
+	line-height: 1.4;
+}
+
+.comment-bubble-meta {
+	font-size: 10px;
+	color: rgba(255, 255, 255, 0.45);
+	margin-bottom: 2px;
+	display: flex;
+	justify-content: space-between;
+}
+
+.comment-attachment-list {
+	display: flex;
+	flex-wrap: wrap;
+	gap: 6px;
+	margin-top: 6px;
+}
+
+.comment-image-attachment .attachment-preview-open {
+	display: grid;
+	flex: 0 1 auto;
+	width: min(120px, 35vw);
+	max-width: 100%;
+	height: 88px;
+	min-width: 0;
+	box-sizing: border-box;
+}
+
+.comment-image-attachment {
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	width: auto;
+	max-width: 100%;
+}
+
+.comment-location-link {
+	align-self: center;
+	color: #d7c5ff;
+	font-size: 11px;
+	overflow-wrap: anywhere;
+}
+
+.comment-attachment-link {
+	display: inline-grid;
+	place-items: center;
+	width: 30px;
+	height: 30px;
+	border: 1px solid rgba(255, 255, 255, 0.16);
+	border-radius: 9px;
+	background: rgba(255, 255, 255, 0.1);
+	color: #fff;
+	text-decoration: none;
+	font-size: 15px;
+}
+
+.comment-attachment-link:hover,
+.comment-attachment-link:focus-visible {
+	background: rgba(255, 255, 255, 0.25);
+	outline: 2px solid rgba(255, 255, 255, 0.65);
+	outline-offset: 2px;
+}
+
+.comment-input-box-row {
+	display: flex;
+	align-items: center;
+	gap: 6px;
+	width: 100%;
+	min-width: 0;
+	box-sizing: border-box;
+}
+
+.chat-composer-field {
+	position: relative;
+	display: flex;
+	align-items: center;
+	flex: 1 1 0;
+	width: 0;
+	min-width: 0;
+	height: 36px;
+	padding: 2px 4px;
+	border: 1px solid rgba(255, 255, 255, 0.16);
+	border-radius: 12px;
+	background: rgba(255, 255, 255, 0.1);
+	box-sizing: border-box;
+}
+
+.chat-composer-field input[name="text"] {
+	display: block;
+	flex: 1 1 0;
+	width: 0 !important;
+	min-width: 0;
+	height: 30px;
+	margin: 0 !important;
+	padding: 6px 8px !important;
+	border: 0;
+	border-radius: 8px !important;
+	background: transparent;
+	font-size: 12px !important;
+}
+
+.chat-composer-field input[name="text"]:focus {
+	background: transparent;
+}
+
+.chat-composer-field .chat-attachment-toggle {
+	flex: 0 0 30px;
+	width: 30px !important;
+	height: 30px !important;
+	padding: 0 !important;
+	border: 0 !important;
+	border-radius: 50% !important;
+	background: transparent !important;
+	color: #fff !important;
+	font-size: 22px !important;
+	line-height: 1;
+	transition: transform 0.2s ease, background-color 0.2s ease;
+}
+
+.chat-attachment-toggle[aria-expanded="true"] {
+	transform: rotate(45deg);
+	background: rgba(255, 255, 255, 0.18) !important;
+}
+
+.chat-attachment-actions {
+	position: absolute;
+	z-index: 3;
+	left: 0;
+	bottom: 42px;
+	display: grid;
+	grid-template-columns: repeat(4, 36px);
+	gap: 6px;
+	padding: 8px;
+	border: 1px solid rgba(255, 255, 255, 0.15);
+	border-radius: 12px;
+	background: rgba(38, 22, 79, 0.97);
+	box-shadow: 0 8px 22px rgba(0, 0, 0, 0.3);
+}
+
+.chat-attachment-actions[hidden] {
+	display: none;
+}
+
+.chat-composer-field .chat-attachment-icon {
+	display: grid;
+	place-items: center;
+	width: 36px !important;
+	height: 36px !important;
+	padding: 0 !important;
+	border: 1px solid rgba(255, 255, 255, 0.15);
+	border-radius: 9px;
+	background: rgba(255, 255, 255, 0.1);
+	color: #fff;
+	font-size: 17px;
+}
+
+.chat-attachment-icon:hover,
+.chat-attachment-icon:focus-visible {
+	background: rgba(255, 255, 255, 0.25);
+	outline: 2px solid rgba(255, 255, 255, 0.65);
+	outline-offset: 1px;
+}
+
+.chat-attachment-input {
+	display: none !important;
+}
+
+.chat-attachment-status {
+	position: absolute;
+	left: 0;
+	bottom: 42px;
+	z-index: 2;
+	display: flex;
+	flex-direction: column;
+	align-items: flex-start;
+	gap: 6px;
+	max-width: min(250px, 70vw);
+	max-height: 180px;
+	overflow: auto;
+	padding: 6px 9px;
+	border-radius: 8px;
+	background: rgba(38, 22, 79, 0.97);
+	color: rgba(255, 255, 255, 0.9);
+	font-size: 11px;
+	overflow-wrap: anywhere;
+}
+
+.chat-attachment-status[hidden] {
+	display: none;
+}
+
+.comment-input-box-row button {
+	flex: 0 0 68px;
+	width: 68px !important;
+	padding: 0 14px !important;
+	font-size: 12px !important;
+	height: 36px;
+	border-radius: 10px !important;
+	background: #ffffff;
+	color: #6a11cb;
+}
+.btn-comment-toggle {
+	width: 78px;
+	font-size: 9px;
+	text-transform: uppercase;
+}
+.btn-comment-toggle:hover {
+	background: rgba(255, 255, 255, 0.2) !important;
+	color: #fff !important;
+}
 
 		</style>
 	</head>	
 
-	<body>
+		
+<body>
+		<!-- 🌟 Main Dynamic Grid Canvas Layout Wrapper -->
 		<div class="dashboard-container">
 			
 			<!-- LEFT SIDEBAR: PROFILE & CONTROLS -->
-<div class="glass-card profile-card">
-	<img src={avatarUrl} alt="Avatar" class="avatar-preview" />
-	<h1 style="font-size:22px; margin: 10px 0 2px 0;">{greetingName}</h1>
-	<p style="font-size:12px; margin-bottom:15px;">Profile Station</p>
-	
-	<div class="form-box" style="text-align: left;">
-		<form id="profileForm" enctype="multipart/form-data">
-			<!-- 1. Avatar File Picker Group -->
-			<div class="form-group" style="margin-bottom: 12px;">
-				<label for="avatarFileInput">Avatar Photo</label>
-				<input 
-					type="file" 
-					id="avatarFileInput" 
-					name="avatarFile" 
-					accept="image/*" 
-					style="background:transparent; font-size:11px;" 
-				/>
+			<div class="glass-card profile-card" data-user-id={userId}>
+				<img src={avatarUrl} alt="Avatar" class="avatar-preview" />
+				<h1 style="font-size:22px; margin: 10px 0 2px 0;">{greetingName}</h1>
+				<p style="font-size:12px; margin-bottom:15px;">Profile Station</p>
+				
+				<div class="form-box" style="text-align: left;">
+					<form id="profileForm" enctype="multipart/form-data">
+						<input type="hidden" id="compressedAvatarString" name="compressedAvatarString" value="" />
+						<!-- 1. Avatar File Picker Group -->
+						<div class="form-group" style="margin-bottom: 12px;">
+							<label for="avatarFileInput">Avatar Photo</label>
+							<input 
+								type="file" 
+								id="avatarFileInput" 
+								name="avatarFile" 
+								accept="image/*" 
+								style="background:transparent; font-size:11px;" 
+							/>
+						</div>
+
+						<!-- 2. Display Name Group -->
+						<div class="form-group" style="margin-bottom: 12px;">
+							<label for="profileDisplayName">
+								Display Name 
+								<span class="char-counter" id="displayNameCounter">(0 / 50)</span>
+							</label>
+							<input 
+								type="text" 
+								id="profileDisplayName"
+								name="displayName" 
+								value={displayName} 
+								maxlength="50"
+							/>
+						</div>
+
+						<!-- 3. Location Group -->
+						<div class="form-group" style="margin-bottom: 12px;">
+							<label for="profileLocation">Location</label>
+							<input 
+								type="text" 
+								id="profileLocation"
+								name="address" 
+								value={address} 
+							/>
+						</div>
+
+						<!-- 4. Bio Textarea Group -->
+						<div class="form-group" style="margin-bottom: 12px;">
+							<label for="profileBio">
+								Bio 
+								<span class="char-counter" id="bioCounter">(0 / 250)</span>
+							</label>
+							<textarea id="profileBio" name="bio" maxlength="250" placeholder="Tell us about yourself...">{bio}</textarea>
+						</div>
+
+						<!-- 5. Form Control Action Buttons Split Row -->
+						<div style="display: grid; grid-template-columns: 1fr auto; gap: 10px; margin-top: 15px;">
+							<button type="submit" class="btn-submit" style="margin: 0;">Save Profile</button>
+							<button type="button" id="clearProfileBtn" class="btn-clear-profile" title="Wipe form fields" style="margin: 0; padding: 0 15px;">Wipe</button>
+						</div>
+					</form>
+				</div>
+				
+				<!-- Separate Secure Logout Action -->
+				<form action="/logout-api" method="POST">
+					<button type="submit" class="btn-logout">Log Out</button>
+				</form>
 			</div>
 
-			<!-- 2. Display Name Group -->
-			<div class="form-group" style="margin-bottom: 12px;">
-				<label for="profileDisplayName">Display Name</label>
-				<input 
-					type="text" 
-					id="profileDisplayName"
-					name="displayName" 
-					value={displayName} 
-				/>
-			</div>
-
-			<!-- 3. Location Group -->
-			<div class="form-group" style="margin-bottom: 12px;">
-				<label for="profileLocation">Location</label>
-				<input 
-					type="text" 
-					id="profileLocation"
-					name="address" 
-					value={address} 
-				/>
-			</div>
-
-			<!-- 4. Bio Textarea Group -->
-			<div class="form-group" style="margin-bottom: 12px;">
-				<label for="profileBio">
-					Bio 
-					<span class="char-counter" id="bioCounter">(0 / 250)</span>
-				</label>
-				<textarea id="profileBio" name="bio" maxlength="250" placeholder="Tell us about yourself...">{bio}</textarea>
-			</div>
-
-			<!-- 5. Submission Execution CTA -->
-			<button type="submit" class="btn-submit">Save Profile</button>
-		</form>
-	</div>
-	
-	<!-- Separate Secure Logout Action -->
-	<form action="/logout-api" method="POST">
-		<button type="submit" class="btn-logout">Log Out</button>
-	</form>
-</div>
-
-			<!-- RIGHT SIDEBAR: INTERACTIVE WORKSPACE NOTEPAD -->
+			<!-- RIGHT WORKSPACE: INTERACTIVE WORKSPACE NOTEPAD -->
 			<div class="glass-card">
 				<h2 style="margin-top:0; border-bottom: 1px solid rgba(255,255,255,0.2); padding-bottom:10px;">📋 Personal Notepad Workspace</h2>
+			<div class="dashboard-statistics" aria-label="Dashboard note statistics">
+				<div class="dashboard-stat-card"><strong data-note-stat="total">{noteStatistics.total}</strong><span>Total Notes</span></div>
+				<div class="dashboard-stat-card"><strong data-note-stat="general">{noteStatistics.general}</strong><span>General</span></div>
+				<div class="dashboard-stat-card"><strong data-note-stat="work">{noteStatistics.work}</strong><span>Work</span></div>
+				<div class="dashboard-stat-card"><strong data-note-stat="personal">{noteStatistics.personal}</strong><span>Personal</span></div>
+				<div class="dashboard-stat-card"><strong data-note-stat="ideas">{noteStatistics.ideas}</strong><span>Ideas</span></div>
+			</div>
 				
-				<!-- Live Workspace Filter Query Bar -->
-<div class="search-wrapper">
-	<span class="search-icon">🔍</span>
-	<input 
-		type="text" 
-		id="workspaceSearch" 
-		placeholder="Search notes by title or content instantly..." 
-		aria-label="Search workspace notes"
-	/>
-	<!-- 🌟 ADDED THIS CLEAR BUTTON -->
-	<button type="button" id="clearSearchBtn" class="btn-clear-search" aria-label="Clear search input">✕</button>
-</div>
+			<!-- Live Workspace Filter Query Bar -->
+			<div class="search-wrapper">
+					<span class="search-icon">🔍</span>
+					<input type="text" id="workspaceSearch" placeholder="Search notes by title or content..." aria-label="Search workspace notes" />
+					<button type="button" id="clearSearchBtn" class="btn-clear-search">✕</button>
+				</div>
 
+				<!-- Interactive Category Filtering Tabs Bar Row -->
+				<div class="category-tabs-bar">
+					<button type="button" class="tab-btn active" data-filter="all">All Notes</button>
+					<button type="button" class="tab-btn" data-filter="General">📁 General</button>
+					<button type="button" class="tab-btn" data-filter="Work">💼 Work</button>
+					<button type="button" class="tab-btn" data-filter="Personal">🏠 Personal</button>
+					<button type="button" class="tab-btn" data-filter="Ideas">💡 Ideas</button>
+					<button type="button" class="tab-btn" data-filter="favorites">⭐ Favorites</button>
+				</div>
 
-				<!-- Add Note Sub-Form Grid -->
-<form id="addNoteForm" class="add-note-form">
-	<div class="form-group">
-		<label for="noteTitle">
-			Note Title 
-			<span class="char-counter" id="titleCounter">(0 / 30)</span>
-		</label>
-		<input 
-			type="text" 
-			id="noteTitle" 
-			name="title" 
-			placeholder="Meeting details..." 
-			maxlength="30"
-			required 
-		/>
-	</div>
-	
-	<div class="form-group">
-		<label for="noteContent">
-			What are you thinking? 
-			<span class="char-counter" id="contentCounter">(0 / 120)</span>
-		</label>
-		<input 
-			type="text" 
-			id="noteContent" 
-			name="content" 
-			placeholder="Remember to review the database..." 
-			maxlength="120"
-			required 
-		/>
-	</div>
-	
-	<button type="submit" class="btn-add-note">Add Note</button>
-</form>
+					<!-- Overwrite your open tag to match this exactly: -->
+					<form id="addNoteForm" class="add-note-form" novalidate>
+					<div class="form-group">
+						<label for="noteTitle">Note Title <span class="char-counter" id="titleCounter">(0 / 30)</span></label>
+						<input type="text" id="noteTitle" name="title" placeholder="Meeting details..." maxlength="30" required />
+					</div>
+					
+					<div class="form-group">
+						<label for="noteContent">What are you thinking? <span class="char-counter" id="contentCounter">(0 / 120)</span></label>
+						<input type="text" id="noteContent" name="content" placeholder="Remember to review..." maxlength="120" required />
+					</div>
 
+					<!-- Category Selector Input -->
+					<div class="form-group">
+						<label for="noteCategory">Category</label>
+						<select id="noteCategory" name="category" class="select-category">
+							<option value="General">📁 General</option>
+							<option value="Work">💼 Work</option>
+							<option value="Personal">🏠 Personal</option>
+							<option value="Ideas">💡 Ideas</option>
+						</select>
+					</div>
 
-				<!-- Dynamic Rendered Notes Feed List -->
-<div class="notes-grid">
+					<div class="note-attachment-controls"  aria-label="Optional note attachments">
+						<button type="button" id="attachFileButton">📎 Attach file</button>
+						<button type="button" id="attachPhotoButton">🖼️ Add photo</button>
+						<button type="button" id="attachCameraButton">📷 Open camera</button>
+						<button type="button" id="attachLocationButton">📍 Add location</button>
+						<input class="note-attachment-input" type="file" id="noteFileInput" name="fileAttachments" multiple accept=".pdf,.txt,.csv,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.jpg,.jpeg,.png,.gif,.webp,.heic,.heif" />
+						<input class="note-attachment-input" type="file" id="notePhotoInput" name="photoAttachments" multiple accept="image/jpeg,image/png,image/gif,image/webp,image/heic,image/heif" />
+						<input class="note-attachment-input" type="file" id="noteCameraInput" name="cameraAttachment" accept="image/*" capture="environment" />
+					</div>
+					<p class="note-attachment-status" id="noteAttachmentStatus" aria-live="polite">No attachments selected.</p>
+					<input type="hidden" id="noteLatitude" name="latitude" />
+					<input type="hidden" id="noteLongitude" name="longitude" />
+					
+					<button type="submit" class="btn-add-note">Add Note</button>
+				</form>
+
+			<div class="notes-grid">
 	{userNotes.length === 0 ? (
-		<div style="grid-column: 1 / -1; text-align:center; color:rgba(255,255,255,0.5); padding: 60px 20px;">
-			<span style="font-size: 40px; display:block; margin-bottom:10px;">📋</span>
-			<p style="margin:0;">Your workspace is empty. Type a note above to store it safely!</p>
+		<div style="grid-column: 1 / -1; text-align:center; color:rgba(255,255,255,0.4); padding: 60px 20px;">
+			<span>📋</span><p>Your workspace is empty.</p>
 		</div>
 	) : (
 		userNotes.map((note) => (
-			<div class="note-item">
-				<button class="btn-delete-note" data-id={note.id} title="Delete this note">✕</button>
-				<div>
-					<h4>{note.title}</h4>
-					<p>{note.content}</p>
+			<div class="note-item" data-id={note.id} data-user-role={note.user_role} data-category={note.category || "General"} data-pinned={Number(note.is_pinned) === 1 ? "true" : "false"} data-favorite={Number(note.is_favorite) === 1 ? "true" : "false"}>
+				<div class="note-controls">
+					<button type="button" class="btn-card-action btn-comment-toggle" data-id={note.id} aria-controls={`drawer-${note.id}`} aria-expanded="false" title="Open comments">💬 Chat <span class="chat-unread-badge" data-unread-count hidden></span></button>
+					{note.user_role === 'owner' && (
+						<button class="btn-card-action btn-share-note" data-id={note.id} title="Share note with a friend">Share</button>
+					)}
 				</div>
-				<span class="note-date">🗓️ {note.date}</span>
+
+				<div>
+					<span class="note-tag-badge" data-note-category>{note.category || "General"}</span>
+					{note.user_role !== 'owner' && (
+						<span class="note-tag-badge" style="background: rgba(37, 117, 252, 0.25); color: #a1c4fd;">👤 From: {note.owner_name}</span>
+					)}
+					<h4 data-note-title>{note.title}</h4>
+					<p data-note-content>{note.content}</p>
+					<div class="note-card-actions">
+						<button type="button" class="btn-view-note" data-id={note.id}>View</button>
+						<button type="button" class={`btn-note-preference${Number(note.is_pinned) === 1 ? ' is-active' : ''}`} data-preference="pinned" data-id={note.id} aria-pressed={Number(note.is_pinned) === 1}>{Number(note.is_pinned) === 1 ? "📌 Unpin" : "📌 Pin"}</button>
+						<button type="button" class={`btn-note-preference${Number(note.is_favorite) === 1 ? ' is-active' : ''}`} data-preference="favorite" data-id={note.id} aria-pressed={Number(note.is_favorite) === 1}>{Number(note.is_favorite) === 1 ? "★ Remove Favorite" : "☆ Favorite"}</button>
+						{(note.user_role === 'owner' || note.user_role === 'edit') && (
+							<>
+								<button type="button" class="btn-edit-note" data-id={note.id}>Edit</button>
+								<button type="button" class="btn-delete-note" data-id={note.id} title="Delete this note">Delete</button>
+							</>
+						)}
+					</div>
+					{note.attachments?.length > 0 && (
+						<div class="note-attachment-list">
+							{note.attachments.map((attachment: any) => (
+								attachment.attachment_type === "location" ? (
+									<a href={`https://www.google.com/maps?q=${encodeURIComponent(`${attachment.latitude},${attachment.longitude}`)}`} target="_blank" rel="noopener noreferrer" title="Open exact coordinates in Google Maps">
+										📍 Exact location: {attachment.latitude}, {attachment.longitude}
+									</a>
+								) : attachment.mime_type?.startsWith("image/") ? (
+									<div class="note-image-attachment">
+										<button type="button" class="attachment-preview-open" data-preview-src={`/note-attachments-api?id=${attachment.id}&preview=1`} data-preview-download={`/note-attachments-api?id=${attachment.id}`} data-preview-name={attachment.original_name} aria-label={`View ${attachment.original_name} full screen`}>
+											<img src={`/note-attachments-api?id=${attachment.id}&preview=1`} alt={`Preview of ${attachment.original_name}`} loading="lazy" />
+										</button>
+										<a href={`/note-attachments-api?id=${attachment.id}`} download>{attachment.attachment_type === "camera" ? "📷" : "🖼️"} Download {attachment.original_name}</a>
+									</div>
+								) : (
+									<a href={`/note-attachments-api?id=${attachment.id}`} download>
+										{attachment.attachment_type === "camera" ? "📷" : attachment.attachment_type === "photo" ? "🖼️" : "📎"} {attachment.original_name}
+									</a>
+								)
+							))}
+						</div>
+					)}
+				</div>
+
+				<div>
+					{note.user_role === 'owner' && note.shared_users_list && (
+						<div class="note-shared-footnote">
+							🔗 Shared with: <span class="footnote-users">@{note.shared_users_list}</span>
+						</div>
+					)}
+					<span class="note-date">🗓️ {note.date}</span>
+					{note.user_role === 'owner' && note.shared_users_list && (
+						<div class="note-activity" data-note-activity data-note-id={note.id} aria-live="polite">Checking activity…</div>
+					)}
+				</div>
+
+				<div class="comment-drawer" id={`drawer-${note.id}`} role="region" aria-label={`Comments for ${note.title}`}>
+					<div class="comment-list-feed" id={`comments-feed-${note.id}`}>
+					</div>
+					<form class="comment-input-box-row" data-note-id={note.id}>
+						<div class="chat-composer-field">
+							<button type="button" class="chat-attachment-toggle" aria-label="Show attachment options" aria-expanded="false" title="Attachments">+</button>
+							<div class="chat-attachment-actions" hidden>
+								<button type="button" class="chat-attachment-icon" data-chat-attachment="file" aria-label="Attach file" title="Attach file">📎</button>
+								<button type="button" class="chat-attachment-icon" data-chat-attachment="photo" aria-label="Add photo" title="Add photo">🖼️</button>
+								<button type="button" class="chat-attachment-icon" data-chat-attachment="camera" aria-label="Open camera" title="Open camera">📷</button>
+								<button type="button" class="chat-attachment-icon" data-chat-attachment="location" aria-label="Add location" title="Add location">📍</button>
+							</div>
+							<input class="chat-attachment-input" type="file" name="fileAttachments" multiple accept=".pdf,.txt,.csv,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.jpg,.jpeg,.png,.gif,.webp,.heic,.heif" />
+							<input class="chat-attachment-input" type="file" name="photoAttachments" multiple accept="image/jpeg,image/png,image/gif,image/webp,image/heic,image/heif" />
+							<input class="chat-attachment-input" type="file" name="cameraAttachment" accept="image/*" capture="environment" />
+							<input type="hidden" name="latitude" />
+							<input type="hidden" name="longitude" />
+							<span class="chat-attachment-status" hidden aria-live="polite"></span>
+							<input type="text" name="text" placeholder="Write a comment..." aria-label="Write a comment" maxlength="1000" />
+						</div>
+						<button type="submit">Send</button>
+					</form>
+				</div>
 			</div>
 		))
 	)}
 </div>
-	</div>
+
+			</div>
 		</div>
+
+<dialog id="imagePreviewDialog" class="image-preview-dialog" aria-label="Image preview">
+	<div class="image-preview-dialog-content">
+		<div class="image-preview-dialog-actions">
+			<strong id="imagePreviewName">Image preview</strong>
+			<button type="button" id="closeImagePreview">Close</button>
+		</div>
+		<img id="imagePreviewImage" alt="" />
+		<div class="image-preview-dialog-actions">
+			<span>Full-size image</span>
+			<a id="imagePreviewDownload" href="#" download>Download image</a>
+		</div>
+	</div>
+</dialog>
+
+<dialog id="noteViewDialog" class="note-dialog" aria-labelledby="noteViewTitle">
+	<div class="note-dialog-content">
+		<div class="note-dialog-header">
+			<h2 id="noteViewTitle"></h2>
+			<button type="button" data-close-note-dialog>Close</button>
+		</div>
+		<span id="noteViewCategory" class="note-tag-badge note-dialog-category"></span>
+		<p id="noteViewContent" class="note-dialog-body"></p>
+		<div>
+			<strong>Attachments</strong>
+			<div id="noteViewAttachments" class="note-attachment-list"></div>
+		</div>
+		<time id="noteViewDate" class="note-dialog-date"></time>
+	</div>
+</dialog>
+
+<dialog id="noteEditDialog" class="note-dialog" aria-labelledby="noteEditHeading">
+	<div class="note-dialog-content">
+		<div class="note-dialog-header">
+			<h2 id="noteEditHeading">Edit note</h2>
+			<button type="button" data-close-note-dialog>Close</button>
+		</div>
+		<form id="noteEditForm" class="note-edit-form">
+			<input type="hidden" name="id" />
+			<div>
+				<label for="editNoteTitle">Title</label>
+				<input id="editNoteTitle" name="title" type="text" maxlength="30" required />
+			</div>
+			<div>
+				<label for="editNoteContent">Content</label>
+				<textarea id="editNoteContent" name="content" maxlength="120" required></textarea>
+			</div>
+			<div>
+				<label for="editNoteCategory">Category</label>
+				<select id="editNoteCategory" name="category" required>
+					<option value="General">General</option>
+					<option value="Work">Work</option>
+					<option value="Personal">Personal</option>
+					<option value="Ideas">Ideas</option>
+				</select>
+			</div>
+			<p id="noteEditError" class="note-edit-error" role="alert" hidden></p>
+			<div class="note-dialog-actions">
+				<button type="button" data-close-note-dialog>Cancel</button>
+				<button type="submit">Save changes</button>
+			</div>
+		</form>
+	</div>
+</dialog>
 
 		<!-- 🔔 Floating Glassmorphic Notification Toast Banner -->
 <div id="notificationToast" class="notification-toast" aria-live="polite">
@@ -641,10 +1719,9 @@ const greetingName = displayName || username;
 </div>
 
 
-		<!-- CLIENT SIDE INTERACTIVE CONTROLLERS -->
-		<script>
+<script>
 	// ==========================================
-	// 1. SCOPE INDEPENDENT UTILITY FUNCTIONS
+	// 1. GLOBAL SCOPE UTILITY FUNCTIONS FIRST
 	// ==========================================
 	
 	// Secure escape helper to prevent cross-site script injections (XSS)
@@ -668,8 +1745,10 @@ const greetingName = displayName || username;
 					const res = await fetch(`/notes-api?id=${id}`, { method: 'DELETE' });
 					const data = await res.json();
 					if (data.success) {
+						if (data.warning) showNotificationToast(data.warning, true);
 						setTimeout(() => {
 							cardItem.remove();
+							updateDashboardStatistics();
 							const remainingCards = document.querySelectorAll(".note-item");
 							if (remainingCards.length === 0) {
 								window.location.reload();
@@ -687,156 +1766,555 @@ const greetingName = displayName || username;
 		});
 	}
 
+	function getNoteCard(element: Element | null): HTMLElement | null {
+		return element?.closest<HTMLElement>(".note-item") || null;
+	}
+
+	function openNoteView(card: HTMLElement) {
+		const dialog = document.getElementById("noteViewDialog") as HTMLDialogElement | null;
+		const title = card.querySelector<HTMLElement>("[data-note-title]")?.textContent || "";
+		const content = card.querySelector<HTMLElement>("[data-note-content]")?.textContent || "";
+		const category = card.dataset.category || "General";
+		const attachmentsContainer = document.getElementById("noteViewAttachments");
+		const attachmentList = card.querySelector<HTMLElement>(".note-attachment-list");
+
+		document.getElementById("noteViewTitle")!.textContent = title;
+		document.getElementById("noteViewCategory")!.textContent = category;
+		document.getElementById("noteViewContent")!.textContent = content;
+		document.getElementById("noteViewDate")!.textContent =
+			card.querySelector<HTMLElement>(".note-date")?.textContent?.trim() || "Date unavailable";
+		if (attachmentsContainer) {
+			attachmentsContainer.replaceChildren();
+			if (attachmentList) attachmentsContainer.append(attachmentList.cloneNode(true));
+			else attachmentsContainer.textContent = "No attachments.";
+		}
+		dialog?.showModal();
+	}
+
+	let editingNoteCard: HTMLElement | null = null;
+
+	function openNoteEdit(card: HTMLElement) {
+		const dialog = document.getElementById("noteEditDialog") as HTMLDialogElement | null;
+		const form = document.getElementById("noteEditForm") as HTMLFormElement | null;
+		if (!dialog || !form) return;
+
+		const role = card.dataset.userRole;
+		if (role !== "owner" && role !== "edit") return;
+		const noteIdField = form.elements.namedItem("id");
+		if (!(noteIdField instanceof HTMLInputElement)) return;
+		editingNoteCard = card;
+		noteIdField.value = card.dataset.id || "";
+		(form.elements.namedItem("title") as HTMLInputElement).value =
+			card.querySelector<HTMLElement>("[data-note-title]")?.textContent || "";
+		(form.elements.namedItem("content") as HTMLTextAreaElement).value =
+			card.querySelector<HTMLElement>("[data-note-content]")?.textContent || "";
+		(form.elements.namedItem("category") as HTMLSelectElement).value = card.dataset.category || "General";
+		const error = document.getElementById("noteEditError");
+		if (error) {
+			error.hidden = true;
+			error.textContent = "";
+		}
+		dialog.showModal();
+	}
+
+	function updateDashboardStatistics() {
+		const counts = { total: 0, general: 0, work: 0, personal: 0, ideas: 0 };
+		document.querySelectorAll<HTMLElement>(".notes-grid .note-item:not(.note-skeleton)").forEach((card) => {
+			counts.total += 1;
+			const category = card.dataset.category || "General";
+			if (category === "General") counts.general += 1;
+			if (category === "Work") counts.work += 1;
+			if (category === "Personal") counts.personal += 1;
+			if (category === "Ideas") counts.ideas += 1;
+		});
+
+		for (const [stat, count] of Object.entries(counts)) {
+			const element = document.querySelector<HTMLElement>(`[data-note-stat="${stat}"]`);
+			if (element) element.textContent = String(count);
+		}
+	}
+
 	// ==========================================
-	// 2. FORM AND INTERFACE TARGET INITIALIZERS
+	// 2. VARIABLE DECLARATIONS & SELECTORS NEXT
 	// ==========================================
 	const profileForm = document.getElementById("profileForm") as HTMLFormElement | null;
 	const addNoteForm = document.getElementById("addNoteForm") as HTMLFormElement | null;
+	const workspaceSearch = document.getElementById("workspaceSearch") as HTMLInputElement | null;
+	const clearSearchBtn = document.getElementById("clearSearchBtn") as HTMLButtonElement | null;
+	
 	const avatarFileInput = document.getElementById("avatarFileInput") as HTMLInputElement | null;
 	const avatarPreviewImage = document.querySelector(".avatar-preview") as HTMLImageElement | null;
+	
 	const inputTitle = document.getElementById("noteTitle") as HTMLInputElement | null;
 	const inputContent = document.getElementById("noteContent") as HTMLInputElement | null;
 	const titleCounter = document.getElementById("titleCounter");
 	const contentCounter = document.getElementById("contentCounter");
+	const noteFileInput = document.getElementById("noteFileInput") as HTMLInputElement | null;
+	const notePhotoInput = document.getElementById("notePhotoInput") as HTMLInputElement | null;
+	const noteCameraInput = document.getElementById("noteCameraInput") as HTMLInputElement | null;
+	const noteAttachmentStatus = document.getElementById("noteAttachmentStatus");
+	const noteLatitudeInput = document.getElementById("noteLatitude") as HTMLInputElement | null;
+	const noteLongitudeInput = document.getElementById("noteLongitude") as HTMLInputElement | null;
+	
+	const profileDisplayNameInput = document.getElementById("profileDisplayName") as HTMLInputElement | null;
+	const displayNameCounter = document.getElementById("displayNameCounter");
 	const profileBioInput = document.getElementById("profileBio") as HTMLTextAreaElement | null;
 	const bioCounter = document.getElementById("bioCounter");
+	const clearProfileBtn = document.getElementById("clearProfileBtn");
 
+	// Active Category state caching parameter tracker
+	let activeCategoryFilter = "all";
+
+	function sortNoteCards() {
+		if (!notesGrid) return;
+		const cards = Array.from(notesGrid.querySelectorAll<HTMLElement>(".note-item:not(.note-skeleton)"));
+		cards.sort((a, b) => Number(b.dataset.pinned === "true") - Number(a.dataset.pinned === "true"));
+		cards.forEach((card) => notesGrid.append(card));
+	}
+
+	async function updateNotePreference(button: HTMLButtonElement) {
+		const card = getNoteCard(button);
+		const noteId = button.dataset.id;
+		const preference = button.dataset.preference;
+		if (!card || !noteId || (preference !== "pinned" && preference !== "favorite")) return;
+
+		const enabled = card.dataset[preference] !== "true";
+		button.disabled = true;
+		try {
+			const response = await fetch(`/note-preferences-api?noteId=${encodeURIComponent(noteId)}`, {
+				method: "PUT",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ preference, enabled })
+			});
+			const data = await response.json();
+			if (!response.ok || !data.success) {
+				throw new Error(data.message || "Unable to save this note preference.");
+			}
+
+			card.dataset[preference] = String(enabled);
+			button.setAttribute("aria-pressed", String(enabled));
+			button.classList.toggle("is-active", enabled);
+			button.textContent = preference === "pinned"
+				? (enabled ? "📌 Unpin" : "📌 Pin")
+				: (enabled ? "★ Remove Favorite" : "☆ Favorite");
+			if (preference === "pinned") sortNoteCards();
+			updateWorkspaceVisibility();
+			showNotificationToast(preference === "pinned"
+				? (enabled ? "Note pinned." : "Note unpinned.")
+				: (enabled ? "Added to Favorites." : "Removed from Favorites."));
+		} catch (error) {
+			console.error("Unable to update note preference.", error);
+			showNotificationToast(error instanceof Error ? error.message : "Unable to save this note preference.", true);
+		} finally {
+			button.disabled = false;
+		}
+	}
+
+	document.querySelectorAll<HTMLButtonElement>(".btn-note-preference").forEach((button) => {
+		button.addEventListener("click", () => updateNotePreference(button));
+	});
 
 	// Attach initial deletion events to all static server-rendered notes on boot load
 	document.querySelectorAll(".btn-delete-note").forEach(btn => {
 		attachDeleteListener(btn);
 	});
 
-	// ==========================================
-	// 3. ACTION AND TRANSACTION EVENT LISTENERS
-	// ==========================================
+	document.addEventListener("click", (event) => {
+		const target = event.target;
+		if (!(target instanceof Element)) return;
 
-	// Handle Note Submission
-	addNoteForm?.addEventListener("submit", async (e) => {
-		e.preventDefault();
-
-		const notesGrid = document.querySelector(".notes-grid");
-		if (!notesGrid) return;
-
-		const emptyPrompt = notesGrid.querySelector("div");
-		if (emptyPrompt && emptyPrompt.textContent?.includes("Your workspace is empty")) {
-			emptyPrompt.remove();
+		const viewButton = target.closest(".btn-view-note");
+		if (viewButton) {
+			const card = getNoteCard(viewButton);
+			if (card) openNoteView(card);
+			return;
 		}
 
-		const titleValue = inputTitle ? inputTitle.value.trim() : "";
-		const contentValue = inputContent ? inputContent.value.trim() : "";
+		const editButton = target.closest(".btn-edit-note");
+		if (editButton) {
+			const card = getNoteCard(editButton);
+			if (card) openNoteEdit(card);
+			return;
+		}
 
-		// Append Shimmer Skeleton Placeholder Card
-		const skeletonHTML = `
-			<div class="note-item note-skeleton" id="activeCreationSkeleton">
-				<div>
-					<div class="skeleton-bone bone-title"></div>
-					<div class="skeleton-bone bone-text-1"></div>
-					<div class="skeleton-bone bone-text-2"></div>
-				</div>
-				<div class="skeleton-bone bone-date"></div>
-			</div>
-		`;
-		notesGrid.insertAdjacentHTML("afterbegin", skeletonHTML);
+		const closeButton = target.closest("[data-close-note-dialog]");
+		if (closeButton) {
+			closeButton.closest("dialog")?.close();
+		}
+	});
 
-		const formData = new FormData();
-		formData.append("title", titleValue);
-		formData.append("content", contentValue);
+	document.getElementById("noteEditForm")?.addEventListener("submit", async (event) => {
+		event.preventDefault();
+		const form = event.currentTarget as HTMLFormElement;
+		const noteId = (form.elements.namedItem("id") as HTMLInputElement).value;
+		const title = (form.elements.namedItem("title") as HTMLInputElement).value.trim();
+		const content = (form.elements.namedItem("content") as HTMLTextAreaElement).value.trim();
+		const category = (form.elements.namedItem("category") as HTMLSelectElement).value;
+		const error = document.getElementById("noteEditError");
+		const saveButton = form.querySelector<HTMLButtonElement>('button[type="submit"]');
+		if (!noteId || !editingNoteCard) return;
 
-		addNoteForm.reset();
-		if (titleCounter) titleCounter.textContent = "(0 / 30)";
-		if (contentCounter) contentCounter.textContent = "(0 / 120)";
-
+		if (error) {
+			error.hidden = true;
+			error.textContent = "";
+		}
+		if (saveButton) saveButton.disabled = true;
 		try {
-			const res = await fetch('/notes-api', { method: 'POST', body: formData });
-			const data = await res.json();
-			const skeletonCard = document.getElementById("activeCreationSkeleton");
-
-			if (data.success && skeletonCard) {
-				skeletonCard.classList.remove("note-skeleton");
-				skeletonCard.removeAttribute("id");
-				skeletonCard.innerHTML = `
-					<button class="btn-delete-note" data-id="${data.id}" title="Delete this note">✕</button>
-					<div>
-						<h4>${escapeHTML(titleValue)}</h4>
-						<p>${escapeHTML(contentValue)}</p>
-					</div>
-					<span class="note-date">🗓️ Saved Just now</span>
-				`;
-				attachDeleteListener(skeletonCard.querySelector(".btn-delete-note"));
-			} else {
-				document.getElementById("activeCreationSkeleton")?.remove();
-				alert(data.message || "Failed to save note.");
+			const response = await fetch(`/notes-api?id=${encodeURIComponent(noteId)}`, {
+				method: "PUT",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ title, content, category })
+			});
+			const data = await response.json();
+			if (!response.ok || !data.success) {
+				if (error) {
+					error.textContent = data.message || "Unable to update this note.";
+					error.hidden = false;
+				}
+				return;
 			}
-		} catch { 
-			document.getElementById("activeCreationSkeleton")?.remove();
-			alert("Error reaching node workspace endpoint."); 
+
+			editingNoteCard.dataset.category = data.category;
+			editingNoteCard.querySelector<HTMLElement>("[data-note-category]")!.textContent = data.category;
+			editingNoteCard.querySelector<HTMLElement>("[data-note-title]")!.textContent = data.title;
+			editingNoteCard.querySelector<HTMLElement>("[data-note-content]")!.textContent = data.content;
+			(document.getElementById("noteEditDialog") as HTMLDialogElement).close();
+			editingNoteCard = null;
+			updateDashboardStatistics();
+			updateWorkspaceVisibility();
+			showNotificationToast("Note updated successfully.");
+		} catch (updateError) {
+			console.error("Unable to update note.", updateError);
+			if (error) {
+				error.textContent = "Unable to reach the note update service. Please try again.";
+				error.hidden = false;
+			}
+		} finally {
+			if (saveButton) saveButton.disabled = false;
 		}
 	});
 
-	// Select Search and Clear Button Elements
-const workspaceSearch = document.getElementById("workspaceSearch") as HTMLInputElement | null;
-const clearSearchBtn = document.getElementById("clearSearchBtn") as HTMLButtonElement | null;
+	const notesGrid = document.querySelector(".notes-grid");
+	updateDashboardStatistics();
 
-// Helper logic to execute text filtering layout updates
-function filterWorkspaceNotes(query: string) {
-	const noteCards = document.querySelectorAll(".notes-grid .note-item");
+	const selectedPreviewUrls = new WeakMap<HTMLElement, string[]>();
 
-	noteCards.forEach((card) => {
-		const titleText = card.querySelector("h4")?.textContent?.toLowerCase() || "";
-		const contentText = card.querySelector("p")?.textContent?.toLowerCase() || "";
-		const matchFound = titleText.includes(query) || contentText.includes(query);
+	function setSelectedImagePreviews(container: HTMLElement, files: File[]) {
+		for (const url of selectedPreviewUrls.get(container) || []) URL.revokeObjectURL(url);
+		container.replaceChildren();
 
-		if (matchFound) card.classList.remove("filtered-out");
-		else card.classList.add("filtered-out");
-	});
-
-	// Handle empty state tracking strings
-	const visibleCards = document.querySelectorAll(".notes-grid .note-item:not(.filtered-out)");
-	let noResultsMsg = document.getElementById("noSearchResultsMessage");
-
-	if (visibleCards.length === 0 && noteCards.length > 0) {
-		if (!noResultsMsg) {
-			document.querySelector(".notes-grid")?.insertAdjacentHTML("beforeend", `
-				<div id="noSearchResultsMessage" style="grid-column: 1 / -1; text-align:center; color:rgba(255,255,255,0.4); padding: 40px 20px;">
-					🔍 No notes match your search query string.
-				</div>
-			`);
+		const previewUrls: string[] = [];
+		const imageFiles = files.filter((file) =>
+			file.type.startsWith("image/") || /\.(jpe?g|png|gif|webp|heic|heif)$/i.test(file.name)
+		);
+		for (const file of imageFiles) {
+			const src = URL.createObjectURL(file);
+			previewUrls.push(src);
+			const button = document.createElement("button");
+			button.type = "button";
+			button.className = "attachment-preview-open";
+			button.dataset.previewSrc = src;
+			button.dataset.previewDownload = src;
+			button.dataset.previewName = file.name;
+			button.setAttribute("aria-label", `View ${file.name} full screen`);
+			const image = document.createElement("img");
+			image.src = src;
+			image.alt = `Preview of ${file.name}`;
+			button.append(image);
+			container.append(button);
 		}
-	} else {
-		noResultsMsg?.remove();
+		selectedPreviewUrls.set(container, previewUrls);
 	}
+
+	function updateNoteAttachmentStatus() {
+		if (!noteAttachmentStatus) return;
+		const selectedFiles = [noteFileInput, notePhotoInput, noteCameraInput]
+			.flatMap(input => Array.from(input?.files || []));
+		const displayedNames = [...new Set(selectedFiles.map(file => file.name))];
+		const hasLocation = Boolean(noteLatitudeInput?.value && noteLongitudeInput?.value);
+		noteAttachmentStatus.replaceChildren();
+		if (displayedNames.length > 0) {
+			noteAttachmentStatus.textContent = `Selected: ${displayedNames.join(", ")}`;
+		}
+		if (hasLocation) {
+			if (displayedNames.length > 0) noteAttachmentStatus.append(document.createTextNode(" · "));
+			const latitude = noteLatitudeInput?.value || "";
+			const longitude = noteLongitudeInput?.value || "";
+			const locationLink = document.createElement("a");
+			locationLink.href = `https://www.google.com/maps?q=${encodeURIComponent(`${latitude},${longitude}`)}`;
+			locationLink.target = "_blank";
+			locationLink.rel = "noopener noreferrer";
+			locationLink.textContent = `📍 Exact location: ${latitude}, ${longitude}`;
+			noteAttachmentStatus.append(locationLink);
+		}
+		if (selectedFiles.length === 0 && !hasLocation) {
+			noteAttachmentStatus.textContent = "No attachments selected.";
+		}
+	}
+
+	document.getElementById("attachFileButton")?.addEventListener("click", () => noteFileInput?.click());
+	document.getElementById("attachPhotoButton")?.addEventListener("click", () => notePhotoInput?.click());
+	document.getElementById("attachCameraButton")?.addEventListener("click", () => noteCameraInput?.click());
+	[noteFileInput, notePhotoInput, noteCameraInput].forEach(input => {
+		input?.addEventListener("change", updateNoteAttachmentStatus);
+	});
+
+	document.getElementById("attachLocationButton")?.addEventListener("click", () => {
+		if (!navigator.geolocation) {
+			showNotificationToast("Location is not supported by this browser.", true);
+			return;
+		}
+		if (noteAttachmentStatus) noteAttachmentStatus.textContent = "Getting your location…";
+		navigator.geolocation.getCurrentPosition(
+			(position) => {
+				if (noteLatitudeInput) noteLatitudeInput.value = String(position.coords.latitude);
+				if (noteLongitudeInput) noteLongitudeInput.value = String(position.coords.longitude);
+				updateNoteAttachmentStatus();
+			},
+			(error) => {
+				updateNoteAttachmentStatus();
+				showNotificationToast(`Could not get location: ${error.message}`, true);
+			},
+			{ enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 }
+		);
+	});
+
+	addNoteForm?.addEventListener("reset", () => {
+		setTimeout(updateNoteAttachmentStatus, 0);
+	});
+
+	// ==========================================
+	// 3. UNIFIED COMBINED SEARCH/FILTER SYSTEM
+	// ==========================================
+	function updateWorkspaceVisibility() {
+		const searchQuery = workspaceSearch?.value.toLowerCase().trim() || "";
+		const noteCards = document.querySelectorAll(".notes-grid .note-item");
+
+		noteCards.forEach((card) => {
+			const titleText = card.querySelector("h4")?.textContent?.toLowerCase() || "";
+			const contentText = card.querySelector("p")?.textContent?.toLowerCase() || "";
+			const cardCategory = card.getAttribute("data-category") || "General";
+
+			const matchesSearch = titleText.includes(searchQuery) || contentText.includes(searchQuery);
+			const matchesTab = activeCategoryFilter === "all"
+				|| (activeCategoryFilter === "favorites" ? (card as HTMLElement).dataset.favorite === "true" : cardCategory === activeCategoryFilter);
+
+			if (matchesSearch && matchesTab) {
+				card.classList.remove("filtered-out");
+			} else {
+				card.classList.add("filtered-out");
+			}
+		});
+
+		// Empty state checker
+		const visibleCards = document.querySelectorAll(".notes-grid .note-item:not(.filtered-out)");
+		let noResultsMsg = document.getElementById("noSearchResultsMessage");
+		if (visibleCards.length === 0 && noteCards.length > 0) {
+			if (!noResultsMsg) {
+				document.querySelector(".notes-grid")?.insertAdjacentHTML("beforeend", `
+					<div id="noSearchResultsMessage" style="grid-column: 1 / -1; text-align:center; color:rgba(255,255,255,0.4); padding: 40px 20px;">
+						🔍 No notes match your active filter metrics.
+					</div>
+				`);
+			}
+		} else {
+			noResultsMsg?.remove();
+		}
+	}
+
+	// Connect Event listeners to Tab Switch Buttons
+	document.querySelectorAll(".tab-btn").forEach(btn => {
+		btn.addEventListener("click", () => {
+			document.querySelectorAll(".tab-btn").forEach(b => b.classList.remove("active"));
+			btn.classList.add("active");
+			
+			activeCategoryFilter = btn.getAttribute("data-filter") || "all";
+			updateWorkspaceVisibility();
+		});
+	});
+
+	// Re-route Search Field inputs to call the unified visibility controller
+	workspaceSearch?.addEventListener("input", () => {
+		if (workspaceSearch.value.length > 0) clearSearchBtn?.classList.add("is-visible");
+		else clearSearchBtn?.classList.remove("is-visible");
+		updateWorkspaceVisibility();
+	});
+
+	clearSearchBtn?.addEventListener("click", () => {
+		if (workspaceSearch) workspaceSearch.value = "";
+		clearSearchBtn?.classList.remove("is-visible");
+		workspaceSearch?.focus();
+		updateWorkspaceVisibility();
+	});
+
+	// ==========================================
+	// 4. ACTION AND TRANSACTION EVENT LISTENERS
+	// ==========================================
+
+// Handle Note Submission with Defensive Shake Warning Checks
+addNoteForm?.addEventListener("submit", async (e) => {
+	// 1. Identify input target fields natively
+	const titleElement = document.getElementById("noteTitle") as HTMLInputElement | null;
+	const contentElement = document.getElementById("noteContent") as HTMLInputElement | null;
+	
+	const isTitleEmpty = !titleElement || titleElement.value.trim() === "";
+	const isContentEmpty = !contentElement || contentElement.value.trim() === "";
+
+	// 2. Defensive Block: If any target field is blank, intercept transaction immediately
+	if (isTitleEmpty || isContentEmpty) {
+		e.preventDefault();
+		e.stopImmediatePropagation(); // Stops further execution blocks from launching
+
+		// Trigger shake class onto empty fields
+		if (isTitleEmpty && titleElement) {
+			titleElement.classList.add("shake-warn");
+			// Clear the class exactly after the 400ms animation loop ends so it can re-trigger on subsequent clicks
+			setTimeout(() => titleElement.classList.remove("shake-warn"), 400);
+		}
+
+		if (isContentEmpty && contentElement) {
+			contentElement.classList.add("shake-warn");
+			setTimeout(() => contentElement.classList.remove("shake-warn"), 400);
+		}
+
+		return; // Abort execution completely
+	}
+
+	// 3. Otherwise, if fields are completely safe, pass execution right down to your existing code:
+	e.preventDefault();
+	const notesGrid = document.querySelector(".notes-grid");
+	if (!notesGrid) return;
+
+	const emptyPrompt = notesGrid.querySelector("div");
+	if (emptyPrompt && emptyPrompt.textContent?.includes("Your workspace is empty")) {
+		emptyPrompt.remove();
+	}
+
+	const titleValue = inputTitle ? inputTitle.value.trim() : "";
+	const contentValue = inputContent ? inputContent.value.trim() : "";
+	const categorySelect = document.getElementById("noteCategory") as HTMLSelectElement | null;
+	const categoryValue = categorySelect ? categorySelect.value : "General";
+
+	// Append Shimmer Skeleton Card Placeholder immediately for fast UX feedback
+	const skeletonHTML = `
+		<div class="note-item note-skeleton" id="activeCreationSkeleton">
+			<div>
+				<div class="skeleton-bone bone-title"></div>
+				<div class="skeleton-bone bone-text-1"></div>
+				<div class="skeleton-bone bone-text-2"></div>
+			</div>
+			<div class="skeleton-bone bone-date"></div>
+		</div>
+	`;
+	notesGrid.insertAdjacentHTML("afterbegin", skeletonHTML);
+
+	const formData = new FormData(addNoteForm);
+
+	try {
+		const res = await fetch('/notes-api', { method: 'POST', body: formData });
+		const data = await res.json();
+		const skeletonCard = document.getElementById("activeCreationSkeleton");
+
+		if (data.success && skeletonCard) {
+			skeletonCard.classList.remove("note-skeleton");
+			skeletonCard.removeAttribute("id");
+			skeletonCard.setAttribute("data-category", data.category);
+			skeletonCard.setAttribute("data-id", String(data.id));
+			skeletonCard.setAttribute("data-user-role", "owner");
+			skeletonCard.setAttribute("data-pinned", "false");
+			skeletonCard.setAttribute("data-favorite", "false");
+			const attachmentMarkup = renderNoteAttachments(data.attachments || []);
+			addNoteForm.reset();
+			if (titleCounter) titleCounter.textContent = "(0 / 30)";
+			if (contentCounter) contentCounter.textContent = "(0 / 120)";
+			
+			// Inside your addNoteForm data.success code path block, update innerHTML string to include drawer skeleton:
+skeletonCard.innerHTML = `
+	<div class="note-controls">
+		<button type="button" class="btn-card-action btn-comment-toggle" data-id="${data.id}" aria-controls="drawer-${data.id}" aria-expanded="false">💬 Chat <span class="chat-unread-badge" data-unread-count hidden></span></button>
+		<button class="btn-card-action btn-share-note" data-id="${data.id}">Share</button>
+	</div>
+	<div>
+		<span class="note-tag-badge" data-note-category>${escapeHTML(data.category)}</span>
+		<h4 data-note-title>${escapeHTML(titleValue)}</h4>
+		<p data-note-content>${escapeHTML(contentValue)}</p>
+		<div class="note-card-actions">
+			<button type="button" class="btn-view-note" data-id="${data.id}">View</button>
+			<button type="button" class="btn-note-preference" data-preference="pinned" data-id="${data.id}" aria-pressed="false">📌 Pin</button>
+			<button type="button" class="btn-note-preference" data-preference="favorite" data-id="${data.id}" aria-pressed="false">☆ Favorite</button>
+			<button type="button" class="btn-edit-note" data-id="${data.id}">Edit</button>
+			<button type="button" class="btn-delete-note" data-id="${data.id}" title="Delete this note">Delete</button>
+		</div>
+		${attachmentMarkup}
+	</div>
+	<div>
+		<span class="note-date">🗓️ Just now</span>
+	</div>
+	<div class="comment-drawer" id="drawer-${data.id}" role="region" aria-label="Comments for ${escapeHTML(titleValue)}">
+		<div class="comment-list-feed" id="comments-feed-${data.id}"></div>
+		<form class="comment-input-box-row" data-note-id="${data.id}">
+			<div class="chat-composer-field">
+				<button type="button" class="chat-attachment-toggle" aria-label="Show attachment options" aria-expanded="false" title="Attachments">+</button>
+				<div class="chat-attachment-actions" hidden>
+					<button type="button" class="chat-attachment-icon" data-chat-attachment="file" aria-label="Attach file" title="Attach file">📎</button>
+					<button type="button" class="chat-attachment-icon" data-chat-attachment="photo" aria-label="Add photo" title="Add photo">🖼️</button>
+					<button type="button" class="chat-attachment-icon" data-chat-attachment="camera" aria-label="Open camera" title="Open camera">📷</button>
+					<button type="button" class="chat-attachment-icon" data-chat-attachment="location" aria-label="Add location" title="Add location">📍</button>
+				</div>
+				<input class="chat-attachment-input" type="file" name="fileAttachments" multiple accept=".pdf,.txt,.csv,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.jpg,.jpeg,.png,.gif,.webp,.heic,.heif" />
+				<input class="chat-attachment-input" type="file" name="photoAttachments" multiple accept="image/jpeg,image/png,image/gif,image/webp,image/heic,image/heif" />
+				<input class="chat-attachment-input" type="file" name="cameraAttachment" accept="image/*" capture="environment" />
+				<input type="hidden" name="latitude" />
+				<input type="hidden" name="longitude" />
+				<span class="chat-attachment-status" hidden aria-live="polite"></span>
+				<input type="text" name="text" placeholder="Write a comment..." aria-label="Write a comment" maxlength="1000" />
+			</div>
+			<button type="submit">Send</button>
+		</form>
+	</div>
+`;
+for (const button of skeletonCard.querySelectorAll<HTMLButtonElement>(".btn-note-preference")) {
+	button.addEventListener("click", () => updateNotePreference(button));
+}
+attachDeleteListener(skeletonCard.querySelector(".btn-delete-note"));
+attachShareListener(skeletonCard.querySelector(".btn-share-note"));
+attachCommentToggleListener(skeletonCard.querySelector(".btn-comment-toggle")); // 🌟 CONNECT CHAT TRIGGER ON THE FLY
+
+
+			updateDashboardStatistics();
+			sortNoteCards();
+			updateWorkspaceVisibility();
+		} else {
+			document.getElementById("activeCreationSkeleton")?.remove();
+			alert(data.message || "Failed to save note.");
+		}
+	} catch {
+		document.getElementById("activeCreationSkeleton")?.remove();
+		alert("Error reaching workspace endpoint.");
+	}
+});
+
+function renderNoteAttachments(attachments: any[]): string {
+	if (!Array.isArray(attachments) || attachments.length === 0) return "";
+	const renderedAttachments = attachments.map((attachment) => {
+		if (attachment.attachment_type === "location") {
+			const latitude = escapeHTML(String(attachment.latitude));
+			const longitude = escapeHTML(String(attachment.longitude));
+			return `<a href="https://www.google.com/maps?q=${encodeURIComponent(`${attachment.latitude},${attachment.longitude}`)}" target="_blank" rel="noopener noreferrer" title="Open exact coordinates in Google Maps">📍 Exact location: ${latitude}, ${longitude}</a>`;
+		}
+		const icon = attachment.attachment_type === "camera" ? "📷" : attachment.attachment_type === "photo" ? "🖼️" : "📎";
+		const id = encodeURIComponent(String(attachment.id));
+		const name = escapeHTML(String(attachment.original_name));
+		const downloadUrl = `/note-attachments-api?id=${id}`;
+		if (String(attachment.mime_type || "").startsWith("image/")) {
+			return `<div class="note-image-attachment"><button type="button" class="attachment-preview-open" data-preview-src="${downloadUrl}&preview=1" data-preview-download="${downloadUrl}" data-preview-name="${name}" aria-label="View ${name} full screen"><img src="${downloadUrl}&preview=1" alt="Preview of ${name}" loading="lazy" /></button><a href="${downloadUrl}" download>${icon} Download ${name}</a></div>`;
+		}
+		return `<a href="${downloadUrl}" download>${icon} ${name}</a>`;
+	});
+	return `<div class="note-attachment-list">${renderedAttachments.join("")}</div>`;
 }
 
-// 1. Upgrade input listener to control clear button visibility toggle states
-workspaceSearch?.addEventListener("input", () => {
-	const query = workspaceSearch.value.toLowerCase().trim();
-	
-	// Control dynamic clear button presence flag
-	if (workspaceSearch.value.length > 0) {
-		clearSearchBtn?.classList.add("is-visible");
-	} else {
-		clearSearchBtn?.classList.remove("is-visible");
-	}
-	
-	filterWorkspaceNotes(query);
-});
-
-// 2. Clear Button click action listener
-clearSearchBtn?.addEventListener("click", () => {
-	if (!workspaceSearch) return;
-
-	// Wipes text, hides button, and places the cursor right back in the field
-	workspaceSearch.value = "";
-	clearSearchBtn.classList.remove("is-visible");
-	workspaceSearch.focus();
-
-	// Reset grid layout so all workspace note cards fade back into view immediately
-	filterWorkspaceNotes("");
-});
-
-
-	// Input Character Countdown Metrics Helper Initializers
+	// Input Character Countdown Metrics Helper
 	function setupLiveCounter(input: HTMLInputElement | null, counterEl: HTMLElement | null, maxLength: number) {
 		if (!input || !counterEl) return;
 		input.addEventListener("input", () => {
@@ -849,94 +2327,724 @@ clearSearchBtn?.addEventListener("click", () => {
 	setupLiveCounter(inputTitle, titleCounter, 30);
 	setupLiveCounter(inputContent, contentCounter, 120);
 
-	// Boot load calculation: If a bio already exists from MySQL, update the counter on page load
-if (profileBioInput && bioCounter) {
-	const currentBioLength = profileBioInput.value.length;
-	bioCounter.textContent = `(${currentBioLength} / 250)`;
-	if (currentBioLength >= 250) bioCounter.classList.add("limit-reached");
-}
-
-// Map real-time typing listeners onto the profile bio textarea
-profileBioInput?.addEventListener("input", () => {
-	if (!bioCounter) return;
-	const currentLength = profileBioInput.value.length;
-	
-	bioCounter.textContent = `(${currentLength} / 250)`;
-	
-	if (currentLength >= 250) {
-		bioCounter.classList.add("limit-reached");
-	} else {
-		bioCounter.classList.remove("limit-reached");
+	// Profile Initial Loading Calculations & Listeners
+	if (profileDisplayNameInput && displayNameCounter) {
+		displayNameCounter.textContent = `(${profileDisplayNameInput.value.length} / 50)`;
 	}
+	if (profileBioInput && bioCounter) {
+		bioCounter.textContent = `(${profileBioInput.value.length} / 250)`;
+	}
+
+	profileDisplayNameInput?.addEventListener("input", () => {
+		if (!displayNameCounter) return;
+		const len = profileDisplayNameInput.value.length;
+		displayNameCounter.textContent = `(${len} / 50)`;
+		if (len >= 50) displayNameCounter.classList.add("limit-reached");
+		else displayNameCounter.classList.remove("limit-reached");
+	});
+
+	profileBioInput?.addEventListener("input", () => {
+		if (!bioCounter) return;
+		const len = profileBioInput.value.length;
+		bioCounter.textContent = `(${len} / 250)`;
+		if (len >= 250) bioCounter.classList.add("limit-reached");
+		else bioCounter.classList.remove("limit-reached");
+	});
+
+	// Wipe Profile Button
+	clearProfileBtn?.addEventListener("click", () => {
+		if (confirm("Are you sure you want to completely clear all fields?")) {
+
+if (profileDisplayNameInput) profileDisplayNameInput.value = "";
+if (document.getElementById("profileLocation")) (document.getElementById("profileLocation") as HTMLInputElement).value = "";
+if (profileBioInput) profileBioInput.value = "";
+const fileInput = document.getElementById("avatarFileInput") as HTMLInputElement | null;
+if (fileInput) fileInput.value = "";
+if (displayNameCounter) displayNameCounter.textContent = "(0 / 50)";
+if (bioCounter) bioCounter.textContent = "(0 / 250)";
+}
+});
+
+// 🌟 Upgraded Avatar File Preview & Compression System
+avatarFileInput?.addEventListener("change", () => {
+	const fileList = avatarFileInput.files;
+	if (!fileList || fileList.length === 0) return;
+	const targetedFile = fileList[0];
+
+	if (!targetedFile.type.startsWith("image/")) {
+		alert("Please choose a valid image file configuration (.png, .jpg, .webp).");
+		avatarFileInput.value = "";
+		return;
+	}
+
+	const fileStreamReader = new FileReader();
+	fileStreamReader.onload = (event) => {
+		const parsedResultString = event.target?.result;
+		if (typeof parsedResultString !== "string") return;
+
+		// Create an Image object in memory to compute dimensions
+		const img = new Image();
+		img.src = parsedResultString;
+		img.onload = () => {
+			// Initialize a hidden Canvas element
+			const canvas = document.createElement("canvas");
+			const ctx = canvas.getContext("2d");
+			if (!ctx) return;
+
+			// Define maximum bounds for an avatar photo (e.g., 300px width/height is plenty for a profile icon)
+			const MAX_WIDTH = 300;
+			const MAX_HEIGHT = 300;
+			let width = img.width;
+			let height = img.height;
+
+			// Calculate scale factors to maintain aspect ratio perfectly
+			if (width > height) {
+				if (width > MAX_WIDTH) {
+					height *= MAX_WIDTH / width;
+					width = MAX_WIDTH;
+				}
+			} else {
+				if (height > MAX_HEIGHT) {
+					width *= MAX_HEIGHT / height;
+					height = MAX_HEIGHT;
+				}
+			}
+
+			canvas.width = width;
+			canvas.height = height;
+
+			// Draw the full image down onto the smaller canvas surface area
+			ctx.drawImage(img, 0, 0, width, height);
+
+			// 🌟 COMPRESSION LAYER: Export as a highly compressed JPEG string
+			// 0.6 means 60% quality – it reduces file size by up to 90% while keeping it sharp!
+			const compressedDataUrl = canvas.toDataURL("image/jpeg", 0.6);
+
+			// 1. Instantly swap the visual avatar circle preview source
+			if (avatarPreviewImage) {
+				avatarPreviewImage.src = compressedDataUrl;
+			}
+
+			// 2. TACTICAL PACKAGING OVERRIDE: 
+			// We intercept the multipart file input value on your form and replace it 
+			// with our tiny compressed string so 'profile-api.ts' handles a small dataset!
+			const hiddenPayloadInput = document.getElementById("compressedAvatarString") as HTMLInputElement | null;
+			if (hiddenPayloadInput) {
+				hiddenPayloadInput.value = compressedDataUrl;
+			}
+		};
+	};
+	fileStreamReader.readAsDataURL(targetedFile);
 });
 
 
-	// Avatar Live File Preview Reader System
-	avatarFileInput?.addEventListener("change", () => {
-		const fileList = avatarFileInput.files;
-		if (!fileList || fileList.length === 0) return;
-		const targetedFile = fileList[0];
+// Profile Save Notification Toast Interceptor
+profileForm?.addEventListener("submit", async (e) => {
+e.preventDefault();
+if (!profileForm) return;
+const submitBtn = profileForm.querySelector("button[type='submit']") as HTMLButtonElement | null;
+if (submitBtn) submitBtn.disabled = true;
+const formData = new FormData(profileForm);
+try {
+const res = await fetch('/profile-api', { method: 'POST', body: formData });
+const data = await res.json();
+if (data.success) {
+const enteredName = formData.get("displayName")?.toString().trim();
+const h1Header = document.querySelector(".profile-card h1");
+if (h1Header && enteredName) h1Header.textContent = enteredName;
+showNotificationToast("✨ Profile details saved flawlessly!");
+} else {
+showNotificationToast("❌ " + (data.message || "Failed to update profile settings."), true);
+}
+} catch {
+showNotificationToast("❌ Error reaching profile workspace endpoint.", true);
+} finally {
+if (submitBtn) submitBtn.disabled = false;
+}
+});
+function showNotificationToast(msg: string, isError: boolean = false) {
+const toast = document.getElementById("notificationToast");
+const toastText = document.getElementById("toastMessage");
+if (!toast || !toastText) return;
+toastText.textContent = msg;
+if (isError) toast.classList.add("toast-error");
+else toast.classList.remove("toast-error");
+toast.classList.add("toast-active");
+setTimeout(() => toast.classList.remove("toast-active"), 3500);
+}
 
-		if (!targetedFile.type.startsWith("image/")) {
-			alert("Please choose a valid image file configuration (.png, .jpg, .webp).");
-			avatarFileInput.value = "";
+const profileCard = document.querySelector(".profile-card");
+const currentUserId = profileCard?.getAttribute("data-user-id");
+console.log("Active User ID inside the browser thread:", currentUserId);
+
+function attachCommentToggleListener(btn: Element | null) {
+	if (!btn) return;
+	btn.addEventListener("click", async () => {
+		const noteId = btn.getAttribute("data-id");
+		if (!noteId) return;
+
+		const drawer = document.getElementById(`drawer-${noteId}`);
+		if (!drawer) return;
+
+		const isOpen = drawer.classList.toggle("drawer-open");
+		btn.setAttribute("aria-expanded", String(isOpen));
+
+		if (isOpen) {
+			const loaded = await fetchAndRenderComments(noteId);
+			if (loaded && await markCommentsRead(noteId)) {
+				updateUnreadBadge(noteId, 0);
+				unreadCommentCounts.delete(noteId);
+			}
+		}
+	});
+}
+
+async function fetchAndRenderComments(noteId: string): Promise<boolean> {
+	const feed = document.getElementById(`comments-feed-${noteId}`);
+	if (!feed) return false;
+
+	try {
+		const res = await fetch(`/comments-api?noteId=${encodeURIComponent(noteId)}`);
+		const data = await res.json();
+		if (!res.ok || !data.success || !Array.isArray(data.comments)) {
+			throw new Error(data.message || "Unable to load comments.");
+		}
+
+		if (data.comments.length === 0) {
+			feed.innerHTML = `<div style="font-size:11px; text-align:center; color:rgba(255,255,255,0.3); padding:10px 0;">💬 No comments yet. Start the conversation!</div>`;
+			return true;
+		}
+
+		feed.innerHTML = data.comments.map((c: any) => {
+			const attachmentLinks = (Array.isArray(c.attachments) ? c.attachments : []).map((attachment: any) => {
+				if (attachment.attachment_type === "location") {
+					const latitude = String(attachment.latitude);
+					const longitude = String(attachment.longitude);
+					const mapUrl = `https://www.google.com/maps?q=${encodeURIComponent(`${latitude},${longitude}`)}`;
+					return `<a class="comment-location-link" href="${mapUrl}" target="_blank" rel="noopener noreferrer" aria-label="Open exact shared location in Google Maps" title="Exact coordinates: ${escapeHTML(latitude)}, ${escapeHTML(longitude)}">📍 Exact location: ${escapeHTML(latitude)}, ${escapeHTML(longitude)}</a>`;
+				}
+				const icon = attachment.attachment_type === "camera" ? "📷" : attachment.attachment_type === "photo" ? "🖼️" : "📎";
+				const name = String(attachment.original_name || "Attachment");
+				const id = encodeURIComponent(String(attachment.id));
+				const downloadUrl = `/note-attachments-api?commentAttachmentId=${id}`;
+				if (String(attachment.mime_type || "").startsWith("image/")) {
+					return `<span class="comment-image-attachment"><button type="button" class="attachment-preview-open" data-preview-src="${downloadUrl}&preview=1" data-preview-download="${downloadUrl}" data-preview-name="${escapeHTML(name)}" aria-label="View ${escapeHTML(name)} full screen"><img src="${downloadUrl}&preview=1" alt="Preview of ${escapeHTML(name)}" loading="lazy" /></button><a class="comment-attachment-download" href="${downloadUrl}" download aria-label="Download ${escapeHTML(name)}" title="Download ${escapeHTML(name)}">${icon} Download</a></span>`;
+				}
+				return `<a class="comment-attachment-link" href="${downloadUrl}" download aria-label="Download ${escapeHTML(name)}" title="${escapeHTML(name)}">${icon}</a>`;
+			}).join("");
+			const textMarkup = c.text
+				? `<div style="color:rgba(255,255,255,0.95);">${escapeHTML(String(c.text))}</div>`
+				: "";
+			const attachmentMarkup = attachmentLinks
+				? `<div class="comment-attachment-list">${attachmentLinks}</div>`
+				: "";
+			return `
+				<div class="comment-bubble">
+					<div class="comment-bubble-meta">
+						<strong>${escapeHTML(String(c.author || "User"))}</strong>
+						<span>${escapeHTML(String(c.time || ""))}</span>
+					</div>
+					${textMarkup}
+					${attachmentMarkup}
+				</div>
+			`;
+		}).join("");
+
+		feed.scrollTop = feed.scrollHeight;
+		return true;
+	} catch (error) {
+		feed.textContent = error instanceof Error ? error.message : "Unable to load comments.";
+		return false;
+	}
+}
+
+async function markCommentsRead(noteId: string): Promise<boolean> {
+	try {
+		const response = await fetch("/comments-api", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ action: "read", noteId })
+		});
+		const result = await response.json();
+		if (!response.ok || !result.success) {
+			throw new Error(result.message || "Unable to mark comments as read.");
+		}
+		return true;
+	} catch (error) {
+		showNotificationToast(error instanceof Error ? error.message : "Unable to update read status.", true);
+		return false;
+	}
+}
+
+const unreadCommentCounts = new Map<string, number>();
+let unreadCommentsInitialized = false;
+let unreadCommentsRefreshInProgress = false;
+
+function updateUnreadBadge(noteId: string, count: number) {
+	const button = document.querySelector<HTMLButtonElement>(`.btn-comment-toggle[data-id="${noteId}"]`);
+	const badge = button?.querySelector<HTMLElement>("[data-unread-count]");
+	if (!button || !badge) return;
+
+	badge.hidden = count < 1;
+	badge.textContent = count > 99 ? "99+" : String(count);
+	button.setAttribute("aria-label", count > 0
+		? `Open comments, ${count} unread`
+		: "Open comments");
+}
+
+async function refreshUnreadComments() {
+	if (document.visibilityState !== "visible" || unreadCommentsRefreshInProgress) return;
+	unreadCommentsRefreshInProgress = true;
+
+	try {
+		const response = await fetch("/comments-api?mode=unread");
+		const result = await response.json();
+		if (!response.ok || !result.success || !Array.isArray(result.unreadNotes)) {
+			throw new Error(result.message || "Unable to check unread comments.");
+		}
+
+		const unreadNotes = result.unreadNotes as Array<{
+			note_id: number | string;
+			title: string;
+			unread_count: number | string;
+		}>;
+		const latestCounts = new Map<string, number>();
+		const newlyUnreadTitles: string[] = [];
+
+		for (const unreadNote of unreadNotes) {
+			const noteId = String(unreadNote.note_id);
+			const count = Number(unreadNote.unread_count);
+			if (!Number.isFinite(count) || count < 1) continue;
+
+			const drawer = document.getElementById(`drawer-${noteId}`);
+			if (drawer?.classList.contains("drawer-open")) {
+				if (await fetchAndRenderComments(noteId) && await markCommentsRead(noteId)) {
+					updateUnreadBadge(noteId, 0);
+					continue;
+				}
+			}
+
+			latestCounts.set(noteId, count);
+			updateUnreadBadge(noteId, count);
+			if (unreadCommentsInitialized && count > (unreadCommentCounts.get(noteId) || 0)) {
+				newlyUnreadTitles.push(unreadNote.title);
+			}
+		}
+
+		for (const noteId of unreadCommentCounts.keys()) {
+			if (!latestCounts.has(noteId)) updateUnreadBadge(noteId, 0);
+		}
+
+		const totalUnread = [...latestCounts.values()].reduce((total, count) => total + count, 0);
+		if (!unreadCommentsInitialized && totalUnread > 0) {
+			showNotificationToast(`You have unread comments in ${latestCounts.size} note${latestCounts.size === 1 ? "" : "s"}. Open Chat to review.`);
+		} else if (newlyUnreadTitles.length > 0) {
+			const titleSummary = newlyUnreadTitles.slice(0, 2).join(", ");
+			const remaining = newlyUnreadTitles.length > 2 ? ` and ${newlyUnreadTitles.length - 2} more` : "";
+			showNotificationToast(`New comment on ${titleSummary}${remaining}.`);
+		}
+
+		unreadCommentCounts.clear();
+		for (const [noteId, count] of latestCounts) unreadCommentCounts.set(noteId, count);
+		unreadCommentsInitialized = true;
+	} catch (error) {
+		console.error("Unable to refresh unread comment notifications.", error);
+	} finally {
+		unreadCommentsRefreshInProgress = false;
+	}
+}
+
+// Initial binding for all static note comment form submit event pipelines on page load
+document.querySelectorAll(".btn-comment-toggle").forEach(btn => attachCommentToggleListener(btn));
+
+const imagePreviewDialog = document.getElementById("imagePreviewDialog") as HTMLDialogElement | null;
+const imagePreviewImage = document.getElementById("imagePreviewImage") as HTMLImageElement | null;
+const imagePreviewName = document.getElementById("imagePreviewName");
+const imagePreviewDownload = document.getElementById("imagePreviewDownload") as HTMLAnchorElement | null;
+
+function openImagePreview(src: string, downloadUrl: string, name: string) {
+	if (!imagePreviewDialog || !imagePreviewImage || !imagePreviewDownload) return;
+	imagePreviewImage.src = src;
+	imagePreviewImage.alt = name;
+	if (imagePreviewName) imagePreviewName.textContent = name;
+	imagePreviewDownload.href = downloadUrl;
+	imagePreviewDownload.download = name;
+	imagePreviewDialog.showModal();
+}
+
+document.getElementById("closeImagePreview")?.addEventListener("click", () => imagePreviewDialog?.close());
+imagePreviewDialog?.addEventListener("click", (event) => {
+	if (event.target === imagePreviewDialog) imagePreviewDialog.close();
+});
+imagePreviewImage?.addEventListener("error", () => {
+	if (imagePreviewName && !imagePreviewName.textContent?.includes("preview unavailable")) {
+		imagePreviewName.textContent = `${imagePreviewName.textContent || "Image"} (preview unavailable in this browser)`;
+	}
+});
+document.addEventListener("error", (event) => {
+	const image = event.target;
+	if (!(image instanceof HTMLImageElement) || !image.matches(".attachment-preview-open img")) return;
+	const fallback = document.createElement("span");
+	fallback.textContent = "Preview unavailable";
+	image.replaceWith(fallback);
+}, true);
+
+document.addEventListener("click", (event) => {
+	const target = event.target as HTMLElement;
+	const previewButton = target.closest<HTMLButtonElement>(".attachment-preview-open");
+	if (previewButton) {
+		openImagePreview(
+			previewButton.dataset.previewSrc || "",
+			previewButton.dataset.previewDownload || previewButton.dataset.previewSrc || "",
+			previewButton.dataset.previewName || "Image preview"
+		);
+		return;
+	}
+
+	const toggle = target.closest<HTMLButtonElement>(".chat-attachment-toggle");
+	if (toggle) {
+		const actions = toggle.parentElement?.querySelector<HTMLElement>(".chat-attachment-actions");
+		if (!actions) return;
+		actions.hidden = !actions.hidden;
+		toggle.setAttribute("aria-expanded", String(!actions.hidden));
+		toggle.setAttribute("aria-label", actions.hidden ? "Show attachment options" : "Hide attachment options");
+		return;
+	}
+
+	const action = target.closest<HTMLButtonElement>("[data-chat-attachment]");
+	if (!action) return;
+	const form = action.closest<HTMLFormElement>(".comment-input-box-row");
+	if (!form) return;
+
+	if (action.dataset.chatAttachment === "location") {
+		const status = form.querySelector<HTMLElement>(".chat-attachment-status");
+		const latitudeInput = form.querySelector<HTMLInputElement>('input[name="latitude"]');
+		const longitudeInput = form.querySelector<HTMLInputElement>('input[name="longitude"]');
+		if (!navigator.geolocation) {
+			showNotificationToast("Location is not supported by this browser.", true);
 			return;
 		}
+		if (status) {
+			status.hidden = false;
+			status.textContent = "Getting location…";
+		}
+		navigator.geolocation.getCurrentPosition(
+			(position) => {
+				if (latitudeInput) latitudeInput.value = String(position.coords.latitude);
+				if (longitudeInput) longitudeInput.value = String(position.coords.longitude);
+				updateChatAttachmentStatus(form);
+				closeChatAttachmentMenu(form);
+			},
+			(error) => {
+				updateChatAttachmentStatus(form);
+				showNotificationToast(`Could not get location: ${error.message}`, true);
+			},
+			{ enableHighAccuracy: false, timeout: 10000, maximumAge: 60000 }
+		);
+		return;
+	}
 
-		const fileStreamReader = new FileReader();
-		fileStreamReader.onload = (event) => {
-			const parsedResultString = event.target?.result;
-			if (avatarPreviewImage && typeof parsedResultString === "string") {
-				avatarPreviewImage.src = parsedResultString;
-			}
-		};
-		fileStreamReader.readAsDataURL(targetedFile);
+	const inputName = action.dataset.chatAttachment === "photo"
+		? "photoAttachments"
+		: action.dataset.chatAttachment === "camera" ? "cameraAttachment" : "fileAttachments";
+	form.querySelector<HTMLInputElement>(`input[name="${inputName}"]`)?.click();
+});
+
+document.addEventListener("change", (event) => {
+	const input = event.target as HTMLInputElement;
+	if (!input.matches(".comment-input-box-row .chat-attachment-input")) return;
+	const form = input.closest<HTMLFormElement>(".comment-input-box-row");
+	if (!form) return;
+	updateChatAttachmentStatus(form);
+	closeChatAttachmentMenu(form);
+});
+
+function closeChatAttachmentMenu(form: HTMLFormElement) {
+	const actions = form.querySelector<HTMLElement>(".chat-attachment-actions");
+	const toggle = form.querySelector<HTMLButtonElement>(".chat-attachment-toggle");
+	if (actions) actions.hidden = true;
+	toggle?.setAttribute("aria-expanded", "false");
+	toggle?.setAttribute("aria-label", "Show attachment options");
+}
+
+function updateChatAttachmentStatus(form: HTMLFormElement) {
+	const status = form.querySelector<HTMLElement>(".chat-attachment-status");
+	if (!status) return;
+	const selectedFiles = Array.from(form.querySelectorAll<HTMLInputElement>(".chat-attachment-input"))
+		.flatMap(input => Array.from(input.files || []));
+	const latitude = form.querySelector<HTMLInputElement>('input[name="latitude"]')?.value;
+	const longitude = form.querySelector<HTMLInputElement>('input[name="longitude"]')?.value;
+	status.hidden = selectedFiles.length === 0 && !(latitude && longitude);
+	setSelectedImagePreviews(status, selectedFiles);
+	if (selectedFiles.length > 0) {
+		const filenames = document.createElement("span");
+		filenames.textContent = selectedFiles.map(file => file.name).join(", ");
+		status.prepend(filenames);
+	}
+	if (latitude && longitude) {
+		const locationLink = document.createElement("a");
+		locationLink.href = `https://www.google.com/maps?q=${encodeURIComponent(`${latitude},${longitude}`)}`;
+		locationLink.target = "_blank";
+		locationLink.rel = "noopener noreferrer";
+		locationLink.textContent = `📍 Exact location: ${latitude}, ${longitude}`;
+		status.append(locationLink);
+	}
+}
+
+// Dynamically track comment form submissions via event delegation proxying
+document.addEventListener("submit", async (e) => {
+	const targetForm = e.target as HTMLFormElement;
+	if (!targetForm || !targetForm.classList.contains("comment-input-box-row")) return;
+	
+	e.preventDefault();
+	
+	const noteId = targetForm.getAttribute("data-note-id");
+	const inputField = targetForm.querySelector("input[name='text']") as HTMLInputElement | null;
+	const submitButton = targetForm.querySelector("button[type='submit']") as HTMLButtonElement | null;
+	if (!noteId || !inputField || !submitButton) return;
+
+	const chatText = inputField.value.trim();
+	const hasFiles = Array.from(targetForm.querySelectorAll<HTMLInputElement>(".chat-attachment-input"))
+		.some(input => Boolean(input.files?.length));
+	const hasLocation = Boolean(
+		targetForm.querySelector<HTMLInputElement>('input[name="latitude"]')?.value &&
+		targetForm.querySelector<HTMLInputElement>('input[name="longitude"]')?.value
+	);
+	if (chatText === "" && !hasFiles && !hasLocation) return;
+
+	const formData = new FormData(targetForm);
+	formData.set("noteId", noteId);
+	formData.set("text", chatText);
+
+	submitButton.disabled = true;
+	try {
+		const res = await fetch('/comments-api', { method: 'POST', body: formData });
+		const data = await res.json();
+		if (!res.ok || !data.success) {
+			throw new Error(data.message || "Unable to post your comment.");
+		}
+		targetForm.reset();
+		closeChatAttachmentMenu(targetForm);
+		updateChatAttachmentStatus(targetForm);
+		if (await fetchAndRenderComments(noteId) && await markCommentsRead(noteId)) {
+			updateUnreadBadge(noteId, 0);
+			unreadCommentCounts.delete(noteId);
+		}
+	} catch (error) {
+		showNotificationToast(error instanceof Error ? error.message : "Message delivery failed.", true);
+	} finally {
+		submitButton.disabled = false;
+	}
+});
+
+void refreshUnreadComments();
+window.setInterval(() => {
+	void refreshUnreadComments();
+}, 15_000);
+document.addEventListener("visibilitychange", () => {
+	if (document.visibilityState === "visible") void refreshUnreadComments();
+});
+
+type NoteRecipientActivity = {
+	username: string;
+	is_active: number | string | boolean;
+	last_viewed_at: string | Date | null;
+};
+
+async function refreshNoteActivity(noteId: string) {
+	const card = document.querySelector<HTMLElement>(`.note-item[data-id="${noteId}"]`);
+	if (!card) return;
+
+	let activity = card.querySelector<HTMLElement>("[data-note-activity]");
+	if (!activity) {
+		const footer = card.querySelector(".note-date")?.parentElement;
+		if (!footer) return;
+		activity = document.createElement("div");
+		activity.className = "note-activity";
+		activity.dataset.noteActivity = "";
+		activity.dataset.noteId = noteId;
+		activity.setAttribute("aria-live", "polite");
+		footer.append(activity);
+	}
+
+	try {
+		const response = await fetch(`/activity-api?noteId=${encodeURIComponent(noteId)}`);
+		const result = await response.json();
+		if (!response.ok || !result.success || !Array.isArray(result.recipients)) {
+			throw new Error(result.message || "Unable to load recipient activity.");
+		}
+
+		const recipients = result.recipients as NoteRecipientActivity[];
+		activity.replaceChildren();
+
+		const activeRecipients = recipients.filter((recipient) => Number(recipient.is_active) === 1);
+		for (const recipient of activeRecipients) {
+			const presence = document.createElement("span");
+			presence.className = "activity-presence is-active";
+			const dot = document.createElement("span");
+			dot.className = "activity-presence-dot";
+			dot.setAttribute("aria-hidden", "true");
+			presence.append(dot, document.createTextNode(`@${recipient.username} active`));
+			activity.append(presence);
+		}
+
+		const readers = recipients.filter((recipient) => recipient.last_viewed_at);
+		if (readers.length > 0) {
+			const receipt = document.createElement("span");
+			receipt.className = "note-read-receipt";
+			receipt.textContent = `👁️ Read by ${readers.map((reader) => `@${reader.username}`).join(", ")}`;
+			activity.append(receipt);
+		}
+
+		if (activity.childElementCount === 0) {
+			activity.textContent = "Waiting for a recipient to come online or view this note.";
+		}
+	} catch (error) {
+		activity.textContent = "Activity unavailable.";
+		console.error(`Unable to refresh activity for note ${noteId}.`, error);
+	}
+}
+
+async function sendPresenceHeartbeat() {
+	if (document.visibilityState !== "visible") return;
+	try {
+		const response = await fetch("/activity-api", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ action: "heartbeat" }),
+			keepalive: true
+		});
+		if (!response.ok) throw new Error("Presence heartbeat was rejected.");
+	} catch (error) {
+		console.error("Unable to update active presence.", error);
+	}
+}
+
+async function markSharedNoteViewed(noteId: string, card: HTMLElement) {
+	try {
+		const response = await fetch("/activity-api", {
+			method: "POST",
+			headers: { "Content-Type": "application/json" },
+			body: JSON.stringify({ action: "view", noteId })
+		});
+		const result = await response.json();
+		if (!response.ok || !result.success) {
+			throw new Error(result.message || "Unable to record note view.");
+		}
+		card.dataset.viewReceiptSent = "true";
+	} catch (error) {
+		console.error(`Unable to record view receipt for note ${noteId}.`, error);
+	}
+}
+
+function markVisibleSharedNote(card: HTMLElement) {
+	const noteId = card.dataset.id;
+	if (!noteId || card.dataset.viewReceiptSent === "true" || document.visibilityState !== "visible") return;
+
+	const bounds = card.getBoundingClientRect();
+	const visibleWidth = Math.max(0, Math.min(bounds.right, window.innerWidth) - Math.max(bounds.left, 0));
+	const visibleHeight = Math.max(0, Math.min(bounds.bottom, window.innerHeight) - Math.max(bounds.top, 0));
+	const visibleRatio = (visibleWidth * visibleHeight) / Math.max(1, bounds.width * bounds.height);
+	if (visibleRatio >= 0.5) void markSharedNoteViewed(noteId, card);
+}
+
+if ("IntersectionObserver" in window) {
+	const sharedNoteObserver = new IntersectionObserver((entries) => {
+		for (const entry of entries) {
+			const card = entry.target as HTMLElement;
+			if (entry.isIntersecting && entry.intersectionRatio >= 0.5) markVisibleSharedNote(card);
+		}
+	}, { threshold: 0.5 });
+
+	document.querySelectorAll<HTMLElement>('.note-item[data-user-role]:not([data-user-role="owner"])')
+		.forEach((card) => sharedNoteObserver.observe(card));
+} else {
+	document.querySelectorAll<HTMLElement>('.note-item[data-user-role]:not([data-user-role="owner"])')
+		.forEach((card) => markVisibleSharedNote(card));
+}
+
+void sendPresenceHeartbeat();
+window.setInterval(() => {
+	void sendPresenceHeartbeat();
+}, 60_000);
+document.addEventListener("visibilitychange", () => {
+	if (document.visibilityState === "visible") {
+		void sendPresenceHeartbeat();
+		document.querySelectorAll<HTMLElement>('.note-item[data-user-role]:not([data-user-role="owner"])')
+			.forEach((card) => markVisibleSharedNote(card));
+	}
+});
+
+document.querySelectorAll<HTMLElement>(".note-activity[data-note-id]").forEach((activity) => {
+	const noteId = activity.dataset.noteId;
+	if (noteId) void refreshNoteActivity(noteId);
+});
+window.setInterval(() => {
+	if (document.visibilityState !== "visible") return;
+	document.querySelectorAll<HTMLElement>(".note-activity[data-note-id]").forEach((activity) => {
+		const noteId = activity.dataset.noteId;
+		if (noteId) void refreshNoteActivity(noteId);
 	});
+}, 30_000);
 
-	avatarPreviewImage?.addEventListener("click", () => {
-		avatarFileInput?.click();
-	});
+// 🌟 Secure sharing prompt listener helper function
+function attachShareListener(btn: Element | null) {
+	if (!btn) return;
+	btn.addEventListener("click", async () => {
+		const noteId = btn.getAttribute("data-id");
+		if (!noteId) return;
 
-	// Profile Save Notification Banner Toast Interceptor
-	profileForm?.addEventListener("submit", async (e) => {
-		e.preventDefault();
-		if (!profileForm) return;
+		// 1. Open an interactive prompt modal input box natively
+		const targetFriend = prompt("Enter your friend's exact username to share this note:");
+		if (!targetFriend || targetFriend.trim() === "") return;
 
-		const submitBtn = profileForm.querySelector("button[type='submit']") as HTMLButtonElement | null;
-		if (submitBtn) submitBtn.disabled = true;
-
-		const formData = new FormData(profileForm);
 		try {
-			const res = await fetch('/profile-api', { method: 'POST', body: formData });
+			const res = await fetch('/share-api', {
+				method: 'POST',
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ noteId, username: targetFriend.trim() })
+			});
 			const data = await res.json();
 
-			if (data.success) {
-				const enteredName = formData.get("displayName")?.toString().trim();
-				const h1Header = document.querySelector(".profile-card h1");
-				if (h1Header && enteredName) h1Header.textContent = enteredName;
-				showNotificationToast("✨ Profile details saved flawlessly!");
+			if (res.ok && data.success) {
+				// Fire your beautiful emerald toast notification banner
+				showNotificationToast("✨ Note shared successfully with " + targetFriend + "!");
+				
+				// Dynamically inject or update footnote on the fly without a page reload
+				const cardItem = btn.closest(".note-item");
+				if (cardItem) {
+					let footnote = cardItem.querySelector(".note-shared-footnote");
+					if (!footnote) {
+						const footerDiv = cardItem.querySelector(".note-date")?.parentElement;
+						if (footerDiv) {
+							footerDiv.insertAdjacentHTML("afterbegin", `
+								<div class="note-shared-footnote">
+									🔗 Shared with: <span class="footnote-users">@${escapeHTML(targetFriend)}</span>
+								</div>
+							`);
+						}
+					} else {
+						const usersSpan = footnote.querySelector(".footnote-users");
+						if (usersSpan && usersSpan.textContent) {
+							usersSpan.textContent += `, @${targetFriend}`;
+						}
+					}
+
+					const noteId = cardItem.getAttribute("data-id");
+					if (noteId) void refreshNoteActivity(noteId);
+				}
 			} else {
-				showNotificationToast("❌ " + (data.message || "Failed to update profile settings."), true);
+				showNotificationToast("❌ " + (data.message || "Failed to share note."), true);
 			}
-		} catch { 
-			showNotificationToast("❌ Error reaching profile workspace endpoint.", true);
-		} finally {
-			if (submitBtn) submitBtn.disabled = false;
+		} catch (error) {
+			console.error("Unable to share note.", error);
+			showNotificationToast("❌ Error reaching share execution endpoint.", true);
 		}
 	});
+}
 
-	function showNotificationToast(msg: string, isError: boolean = false) {
-		const toast = document.getElementById("notificationToast");
-		const toastText = document.getElementById("toastMessage");
-		if (!toast || !toastText) return;
+document.querySelectorAll(".btn-share-note").forEach((btn) => attachShareListener(btn));
 
-		toastText.textContent = msg;
-		if (isError) toast.classList.add("toast-error");
-		else toast.classList.remove("toast-error");
-
-		toast.classList.add("toast-active");
-		setTimeout(() => toast.classList.remove("toast-active"), 3500);
-	}
 </script>
 </body>
 </html>

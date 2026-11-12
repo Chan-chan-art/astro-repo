@@ -17,6 +17,9 @@ pnpm-debug.log*
 .env
 .env.production
 
+# private note attachment uploads
+uploads/note-attachments/
+
 # macOS-specific files
 .DS_Store
 

@@ -424,28 +424,66 @@ logForm?.addEventListener("submit", (e) => {
 	}
 });
 
-			// Registration Execution
-			registerForm?.addEventListener("submit", async (e) => {
-				e.preventDefault();
-				if (!registerError) return;
-				registerError.style.display = "none";
+// Inside your registerForm submit event listener in index.astro:
+registerForm?.addEventListener("submit", async (e) => {
+	e.preventDefault(); // Stop standard page reload once at the very top
+	if (!registerError) return;
+	registerError.style.display = "none";
 
-				const formData = new FormData(registerForm);
-				try {
-					const res = await fetch('/register-api', { method: 'POST', body: formData });
-					const data = await res.json();
-					if (data.success) {
-						alert("Identity registered successfully! Logging you in...");
-						window.location.href = '/dashboard';
-					} else {
-						registerError.textContent = data.message || "Registration parameter conflict.";
-						registerError.style.display = "block";
-					}
-				} catch {
-					registerError.textContent = "Gateway registration network error.";
-					registerError.style.display = "block";
-				}
-			});
+	// 1. Gather input targets and their text strings cleanly
+	const regUsernameInput = document.getElementById("regUsername") as HTMLInputElement | null;
+	const regPasswordInput = document.getElementById("regPassword") as HTMLInputElement | null;
+	
+	const usernameValue = regUsernameInput ? regUsernameInput.value.trim() : "";
+	const passwordValue = regPasswordInput ? regPasswordInput.value : "";
+
+	// 🌟 2. ENFORCED FIELD FORMAT CONSTRAINT CHECKS
+
+	// Check A: Password length validation rule
+	if (passwordValue.length < 6) {
+		e.stopImmediatePropagation();
+		if (regPasswordInput) {
+			regPasswordInput.classList.add("shake-warn");
+			setTimeout(() => regPasswordInput.classList.remove("shake-warn"), 400);
+		}
+		registerError.textContent = "Security violation: Password must be at least 6 characters long.";
+		registerError.style.display = "block";
+		return;
+	}
+
+	// Check B: Username format regex validation rule (Only letters, numbers, underscores)
+	const usernameRegex = /^[a-zA-Z0-9_]+$/;
+	if (!usernameRegex.test(usernameValue)) {
+		e.stopImmediatePropagation();
+		if (regUsernameInput) {
+			regUsernameInput.classList.add("shake-warn");
+			setTimeout(() => regUsernameInput.classList.remove("shake-warn"), 400);
+		}
+		registerError.textContent = "Format violation: Username can only contain letters, numbers, and underscores.";
+		registerError.style.display = "block";
+		return; // Halt transaction right here completely if illegal characters are found
+	}
+
+	// 3. SECURE PIPELINE: If fields pass all strict criteria, execute database dispatch
+	const formData = new FormData(registerForm);
+	try {
+		const res = await fetch('/register-api', { method: 'POST', body: formData });
+		const data = await res.json();
+		
+		if (data.success) {
+			window.location.href = '/dashboard';
+		} else {
+			registerError.textContent = data.message || "Registration parameter conflict.";
+			registerError.style.display = "block";
+		}
+	} catch {
+		registerError.textContent = "Gateway registration network error.";
+		registerError.style.display = "block";
+	}
+});
+
+	// ... rest of your existing fetch('/register-api') logic remains exactly the same
+
 
 			// Select Registration Elements
 const regForm = document.getElementById("registerForm") as HTMLFormElement | null;

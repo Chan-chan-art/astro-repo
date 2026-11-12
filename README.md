@@ -28,6 +28,14 @@ Inside of your Astro project, you'll see the following folders and files:
 
 To learn more about the folder structure of an Astro project, refer to [our guide on project structure](https://docs.astro.build/en/basics/project-structure/).
 
+## Note attachments
+
+Before using note attachments, apply `migrations/note-attachments.sql` to the configured MySQL database after creating the existing `notes` table. Uploaded files are stored in the private `uploads/note-attachments/` directory and are served only to users who can access the associated note.
+
+## Note pin and favorite preferences
+
+Before using pinning or Favorites, apply `migrations/note-preferences.sql` to the configured MySQL database. Preferences are stored per signed-in user and note, including for notes shared with that user.
+
 ## 🧞 Commands
 
 All commands are run from the root of the project, from a terminal:
