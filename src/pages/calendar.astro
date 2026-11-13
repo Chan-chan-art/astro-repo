@@ -1,0 +1,710 @@
+---
+import { pool } from '../lib/db';
+import WorkspaceNavigation from '../components/WorkspaceNavigation.astro';
+
+export const prerender = false;
+
+const sessionCookie = Astro.cookies.get("user_session");
+let sessionData: { username?: string } | null = null;
+if (sessionCookie?.value.trim()) {
+	try {
+		sessionData = sessionCookie.json();
+	} catch (error) {
+		console.error("Invalid session cookie JSON format:", error);
+		Astro.cookies.delete("user_session");
+	}
+}
+
+if (!sessionData?.username) return Astro.redirect('/');
+
+const [userRows]: any = await pool.execute(
+	'SELECT display_name, avatar_url FROM users WHERE BINARY username = ?',
+	[sessionData.username]
+);
+if (userRows.length !== 1) return Astro.redirect('/');
+const displayName = userRows[0].display_name || sessionData.username;
+const avatarUrl = userRows[0].avatar_url || "/default-avatar.png";
+---
+
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width" />
+		<title>Calendar | Personal Notepad Workspace</title>
+		<style>
+			:root {
+				color-scheme: light;
+				--page-background: linear-gradient(135deg, #6a11cb 0%, #2575fc 100%);
+				--page-text: #fff;
+				--page-muted: rgba(255, 255, 255, 0.72);
+				--page-surface: rgba(255, 255, 255, 0.1);
+				--page-surface-soft: rgba(255, 255, 255, 0.07);
+				--page-border: rgba(255, 255, 255, 0.14);
+			}
+
+			:root[data-theme="dark"] {
+				color-scheme: dark;
+				--page-background: linear-gradient(135deg, #17132a 0%, #192447 55%, #202c5c 100%);
+				--page-text: #f5f3ff;
+				--page-muted: rgba(235, 231, 255, 0.72);
+				--page-surface: rgba(25, 23, 48, 0.82);
+				--page-surface-soft: rgba(255, 255, 255, 0.055);
+				--page-border: rgba(196, 181, 253, 0.2);
+			}
+
+			* { box-sizing: border-box; }
+
+			body {
+				min-height: 100vh;
+				margin: 0;
+				padding: 24px;
+				background: var(--page-background);
+				color: var(--page-text);
+				font-family: Arial, sans-serif;
+			}
+
+			.workspace-layout {
+				display: grid;
+				grid-template-columns: minmax(240px, 280px) minmax(0, 1fr);
+				gap: 24px;
+				width: min(1400px, 100%);
+				margin: 0 auto;
+				align-items: start;
+			}
+
+			.glass-card {
+				min-width: 0;
+				padding: 26px;
+				border: 1px solid var(--page-border);
+				border-radius: 24px;
+				background: var(--page-surface);
+				box-shadow: 0 8px 32px rgba(31, 38, 135, 0.25);
+				backdrop-filter: blur(12px);
+				-webkit-backdrop-filter: blur(12px);
+			}
+
+			.profile-card {
+				position: sticky;
+				top: 24px;
+				text-align: center;
+			}
+
+			.avatar {
+				width: 88px;
+				height: 88px;
+				border: 3px solid rgba(255, 255, 255, 0.45);
+				border-radius: 50%;
+				object-fit: cover;
+			}
+
+			.profile-card h1 {
+				margin: 10px 0 3px;
+				font-size: 20px;
+				overflow-wrap: anywhere;
+			}
+
+			.profile-card > p {
+				margin: 0;
+				color: var(--page-muted);
+				font-size: 12px;
+			}
+
+			.profile-edit-link {
+				display: inline-block;
+				margin-top: 12px;
+				color: #e2d5ff;
+				font-size: 11px;
+			}
+
+			.calendar-header {
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				gap: 14px;
+				margin-bottom: 20px;
+			}
+
+			.calendar-title h2 {
+				margin: 0;
+				font-size: clamp(22px, 4vw, 30px);
+			}
+
+			.calendar-title p {
+				margin: 6px 0 0;
+				color: var(--page-muted);
+				font-size: 13px;
+			}
+
+			.calendar-actions {
+				display: flex;
+				gap: 8px;
+			}
+
+			button,
+			.action-link {
+				padding: 10px 14px;
+				border: 1px solid var(--page-border);
+				border-radius: 12px;
+				background: var(--page-surface-soft);
+				color: var(--page-text);
+				font: inherit;
+				font-size: 12px;
+				text-decoration: none;
+				cursor: pointer;
+			}
+
+			button:hover,
+			.action-link:hover {
+				background: rgba(255, 255, 255, 0.18);
+			}
+
+			.calendar-month-controls {
+				display: flex;
+				align-items: center;
+				gap: 8px;
+			}
+
+			.calendar-month-controls button {
+				min-width: 40px;
+				font-size: 16px;
+			}
+
+			.calendar-month-controls strong {
+				min-width: 150px;
+				text-align: center;
+				font-size: 16px;
+			}
+
+			.calendar-grid {
+				display: grid;
+				grid-template-columns: repeat(7, minmax(0, 1fr));
+				gap: 8px;
+			}
+
+			.calendar-weekday {
+				padding: 8px 2px;
+				color: var(--page-muted);
+				font-size: 11px;
+				font-weight: 700;
+				text-align: center;
+				text-transform: uppercase;
+			}
+
+			.calendar-day {
+				position: relative;
+				display: flex;
+				flex-direction: column;
+				align-items: flex-start;
+				min-width: 0;
+				min-height: 96px;
+				padding: 10px;
+				border: 1px solid var(--page-border);
+				border-radius: 14px;
+				background: var(--page-surface-soft);
+				color: var(--page-text);
+				text-align: left;
+				transition: background-color 0.18s ease, transform 0.18s ease;
+			}
+
+			.calendar-day:hover {
+				transform: translateY(-2px);
+			}
+
+			.calendar-day.outside-month {
+				opacity: 0.48;
+			}
+
+			.calendar-day.is-today {
+				border-color: rgba(255, 255, 255, 0.85);
+				box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.45);
+			}
+
+			.calendar-day.is-selected {
+				background: rgba(255, 255, 255, 0.2);
+				border-color: #fff;
+			}
+
+			.calendar-day-number {
+				font-size: 13px;
+				font-weight: 700;
+			}
+
+			.calendar-event-dots {
+				display: flex;
+				gap: 4px;
+				margin-top: auto;
+			}
+
+			.calendar-event-dot {
+				width: 6px;
+				height: 6px;
+				border-radius: 50%;
+				background: #d7c5ff;
+			}
+
+			.calendar-day-count {
+				margin-top: 5px;
+				color: var(--page-muted);
+				font-size: 9px;
+			}
+
+			.selected-day-panel {
+				margin-top: 20px;
+				padding: 18px;
+				border: 1px solid var(--page-border);
+				border-radius: 18px;
+				background: var(--page-surface-soft);
+			}
+
+			.selected-day-header {
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				gap: 12px;
+			}
+
+			.selected-day-header h3 {
+				margin: 0;
+				font-size: 17px;
+			}
+
+			.selected-reminder-list {
+				display: grid;
+				gap: 8px;
+				margin: 14px 0 0;
+				padding: 0;
+				list-style: none;
+			}
+
+			.selected-reminder {
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				gap: 12px;
+				padding: 10px 12px;
+				border: 1px solid var(--page-border);
+				border-radius: 12px;
+				background: var(--page-surface);
+			}
+
+			.selected-reminder strong,
+			.selected-reminder time {
+				display: block;
+				font-size: 12px;
+			}
+
+			.selected-reminder time,
+			.empty-day-message {
+				margin: 4px 0 0;
+				color: var(--page-muted);
+				font-size: 11px;
+			}
+
+			.selected-reminder a {
+				color: #e2d5ff;
+				font-size: 11px;
+			}
+
+			.reminder-form {
+				display: grid;
+				grid-template-columns: repeat(2, minmax(0, 1fr));
+				gap: 12px;
+				margin-top: 14px;
+				padding-top: 14px;
+				border-top: 1px solid var(--page-border);
+			}
+
+			.reminder-form[hidden] { display: none; }
+			.reminder-form .wide { grid-column: 1 / -1; }
+
+			label {
+				display: block;
+				margin-bottom: 5px;
+				color: var(--page-muted);
+				font-size: 11px;
+			}
+
+			input,
+			textarea {
+				width: 100%;
+				padding: 10px 12px;
+				border: 1px solid var(--page-border);
+				border-radius: 10px;
+				background: rgba(255, 255, 255, 0.1);
+				color: var(--page-text);
+				font: inherit;
+				font-size: 13px;
+			}
+
+			textarea {
+				min-height: 72px;
+				resize: vertical;
+			}
+
+			input:focus,
+			textarea:focus {
+				outline: 2px solid rgba(255, 255, 255, 0.5);
+				outline-offset: 1px;
+			}
+
+			.form-actions {
+				display: flex;
+				gap: 8px;
+			}
+
+			.form-actions button[type="submit"] {
+				background: #fff;
+				color: #6a11cb;
+				font-weight: 700;
+			}
+
+			.calendar-status {
+				min-height: 18px;
+				margin: 10px 0 0;
+				color: var(--page-muted);
+				font-size: 12px;
+			}
+
+			.calendar-status.error { color: #ffb4b4; }
+
+			:root[data-theme="dark"] .profile-edit-link,
+			:root[data-theme="dark"] .selected-reminder a {
+				color: #c4b5fd;
+			}
+
+			:root[data-theme="dark"] .form-actions button[type="submit"] {
+				border-color: #c4b5fd;
+				background: #c4b5fd;
+				color: #21143b;
+			}
+
+			:root[data-theme="dark"] input,
+			:root[data-theme="dark"] textarea {
+				background: rgba(9, 12, 30, 0.42);
+			}
+
+			@media (max-width: 900px) {
+				body { padding: 14px; }
+				.workspace-layout { grid-template-columns: 1fr; gap: 14px; }
+				.profile-card { position: static; }
+				.profile-card > .avatar { width: 70px; height: 70px; }
+			}
+
+			@media (max-width: 600px) {
+				.glass-card { padding: 17px; border-radius: 19px; }
+				.calendar-header { align-items: flex-start; flex-direction: column; }
+				.calendar-day { min-height: 62px; padding: 7px; border-radius: 10px; }
+				.calendar-grid { gap: 4px; }
+				.calendar-day-count { display: none; }
+				.calendar-title p { font-size: 11px; }
+				.calendar-month-controls { width: 100%; justify-content: space-between; }
+				.calendar-month-controls strong { min-width: 0; }
+				.reminder-form { grid-template-columns: 1fr; }
+				.reminder-form .wide { grid-column: auto; }
+				.selected-day-header { align-items: flex-start; flex-direction: column; }
+			}
+		</style>
+		<script is:inline>
+			(() => {
+				const key = "notepad-theme-preference";
+				let preference = "system";
+				try {
+					const saved = localStorage.getItem(key);
+					if (saved === "light" || saved === "dark" || saved === "system") preference = saved;
+				} catch (error) {
+					console.error("Unable to read the saved theme preference.", error);
+				}
+				const isDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+				document.documentElement.dataset.themePreference = preference;
+				document.documentElement.dataset.theme = preference === "system" ? (isDark ? "dark" : "light") : preference;
+			})();
+		</script>
+	</head>
+	<body>
+		<div class="workspace-layout">
+			<aside class="glass-card profile-card">
+				<img class="avatar" src={avatarUrl} alt="Profile" />
+				<h1>{displayName}</h1>
+				<p>Profile Station</p>
+				<a class="profile-edit-link" href="/dashboard#profileForm">Edit profile</a>
+				<WorkspaceNavigation currentPage="calendar" />
+			</aside>
+
+			<main class="glass-card">
+				<header class="calendar-header">
+					<div class="calendar-title">
+						<h2>Calendar</h2>
+						<p>Your monthly workspace calendar and scheduled reminders.</p>
+					</div>
+					<div class="calendar-month-controls" aria-label="Calendar month controls">
+						<button type="button" id="previousMonth" aria-label="Previous month">‹</button>
+						<strong id="calendarMonthLabel"></strong>
+						<button type="button" id="nextMonth" aria-label="Next month">›</button>
+						<button type="button" id="todayButton">Today</button>
+					</div>
+				</header>
+
+				<div class="calendar-grid" id="calendarGrid" role="grid" aria-label="Monthly calendar">
+					{["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"].map((weekday) => (
+						<div class="calendar-weekday" role="columnheader">{weekday}</div>
+					))}
+				</div>
+
+				<section class="selected-day-panel" aria-labelledby="selectedDateHeading">
+					<div class="selected-day-header">
+						<h3 id="selectedDateHeading">Selected day</h3>
+						<button type="button" id="addCalendarReminder">Add reminder</button>
+					</div>
+					<ul class="selected-reminder-list" id="selectedReminderList"></ul>
+					<p class="empty-day-message" id="emptyDayMessage">Choose a date to view its reminders.</p>
+					<form class="reminder-form" id="calendarReminderForm" hidden>
+						<div class="wide">
+							<label for="calendarReminderTitle">Title</label>
+							<input id="calendarReminderTitle" name="title" maxlength="150" required />
+						</div>
+						<div>
+							<label for="calendarReminderDate">Date</label>
+							<input id="calendarReminderDate" name="date" type="date" required />
+						</div>
+						<div>
+							<label for="calendarReminderTime">Time</label>
+							<input id="calendarReminderTime" name="time" type="time" value="09:00" required />
+						</div>
+						<div class="wide">
+							<label for="calendarReminderDescription">Description</label>
+							<textarea id="calendarReminderDescription" name="description" maxlength="2000"></textarea>
+						</div>
+						<div class="form-actions wide">
+							<button type="submit">Save reminder</button>
+							<button type="button" id="cancelCalendarReminder">Cancel</button>
+						</div>
+					</form>
+					<p class="calendar-status" id="calendarStatus" role="status" aria-live="polite"></p>
+				</section>
+
+				<p style="margin:14px 0 0; color:var(--page-muted); font-size:11px;">
+					Need to edit or complete a reminder? <a class="profile-edit-link" href="/reminders">Manage reminders</a>
+				</p>
+			</main>
+		</div>
+
+		<script>
+			type Reminder = {
+				id: number | string;
+				title: string;
+				description: string;
+				date: string;
+				time: string;
+				completed: number | boolean;
+			};
+
+			const calendarGrid = document.getElementById("calendarGrid")!;
+			const monthLabel = document.getElementById("calendarMonthLabel")!;
+			const selectedDateHeading = document.getElementById("selectedDateHeading")!;
+			const reminderList = document.getElementById("selectedReminderList")!;
+			const emptyDayMessage = document.getElementById("emptyDayMessage")!;
+			const calendarForm = document.getElementById("calendarReminderForm") as HTMLFormElement;
+			const calendarStatus = document.getElementById("calendarStatus")!;
+			const reminderDateInput = document.getElementById("calendarReminderDate") as HTMLInputElement;
+			const reminderTimeInput = document.getElementById("calendarReminderTime") as HTMLInputElement;
+			const colorSchemeQuery = window.matchMedia("(prefers-color-scheme: dark)");
+			const root = document.documentElement;
+			let visibleMonth = new Date();
+			let selectedDate = new Date();
+			let reminders: Reminder[] = [];
+			let calendarRequestId = 0;
+
+			function dateKey(date: Date) {
+				return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+			}
+
+			function parseDateKey(value: string) {
+				const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+				if (!match) return null;
+				const date = new Date(Number(match[1]), Number(match[2]) - 1, Number(match[3]));
+				return dateKey(date) === value ? date : null;
+			}
+
+			function setStatus(message: string, isError = false) {
+				calendarStatus.textContent = message;
+				calendarStatus.classList.toggle("error", isError);
+			}
+
+			function remindersFor(date: Date) {
+				const key = dateKey(date);
+				return reminders.filter((reminder) => reminder.date === key);
+			}
+
+			function renderSelectedDate() {
+				selectedDateHeading.textContent = selectedDate.toLocaleDateString(undefined, {
+					weekday: "long", month: "long", day: "numeric", year: "numeric"
+				});
+				reminderList.replaceChildren();
+				const dayReminders = remindersFor(selectedDate);
+				emptyDayMessage.hidden = dayReminders.length > 0;
+				if (dayReminders.length === 0) emptyDayMessage.textContent = "No reminders for this day yet.";
+
+				for (const reminder of dayReminders) {
+					const item = document.createElement("li");
+					item.className = "selected-reminder";
+					const content = document.createElement("div");
+					const title = document.createElement("strong");
+					title.textContent = reminder.title;
+					const time = document.createElement("time");
+					time.textContent = `${reminder.time}${Number(reminder.completed) ? " · Completed" : ""}`;
+					content.append(title, time);
+					const link = document.createElement("a");
+					link.href = `/reminders?id=${encodeURIComponent(String(reminder.id))}`;
+					link.textContent = "Manage";
+					item.append(content, link);
+					reminderList.append(item);
+				}
+			}
+
+			function renderCalendar() {
+				monthLabel.textContent = visibleMonth.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+				calendarGrid.querySelectorAll(".calendar-day").forEach((day) => day.remove());
+				const firstDay = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth(), 1);
+				const gridStart = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth(), 1 - firstDay.getDay());
+				const todayKey = dateKey(new Date());
+
+				for (let index = 0; index < 42; index += 1) {
+					const date = new Date(gridStart.getFullYear(), gridStart.getMonth(), gridStart.getDate() + index);
+					const key = dateKey(date);
+					const dayReminders = reminders.filter((reminder) => reminder.date === key);
+					const button = document.createElement("button");
+					button.type = "button";
+					button.className = "calendar-day";
+					button.dataset.date = key;
+					button.setAttribute("role", "gridcell");
+					button.setAttribute("aria-pressed", String(key === dateKey(selectedDate)));
+					button.setAttribute("aria-label", `${date.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })}${dayReminders.length ? `, ${dayReminders.length} reminder${dayReminders.length === 1 ? "" : "s"}` : ""}`);
+					if (date.getMonth() !== visibleMonth.getMonth()) button.classList.add("outside-month");
+					if (key === todayKey) button.classList.add("is-today");
+					if (key === dateKey(selectedDate)) button.classList.add("is-selected");
+
+					const number = document.createElement("span");
+					number.className = "calendar-day-number";
+					number.textContent = String(date.getDate());
+					button.append(number);
+					if (dayReminders.length) {
+						const dots = document.createElement("span");
+						dots.className = "calendar-event-dots";
+						dots.setAttribute("aria-hidden", "true");
+						for (let dot = 0; dot < Math.min(dayReminders.length, 4); dot += 1) {
+							const indicator = document.createElement("span");
+							indicator.className = "calendar-event-dot";
+							dots.append(indicator);
+						}
+						button.append(dots);
+						const count = document.createElement("span");
+						count.className = "calendar-day-count";
+						count.textContent = `${dayReminders.length} reminder${dayReminders.length === 1 ? "" : "s"}`;
+						button.append(count);
+					}
+					button.addEventListener("click", () => {
+						selectedDate = date;
+						renderCalendar();
+						renderSelectedDate();
+						setStatus("");
+					});
+					calendarGrid.append(button);
+				}
+				renderSelectedDate();
+			}
+
+			async function loadCalendarReminders() {
+				const requestId = ++calendarRequestId;
+				renderCalendar();
+				const firstVisible = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth(), 1 - new Date(visibleMonth.getFullYear(), visibleMonth.getMonth(), 1).getDay());
+				const lastVisible = new Date(firstVisible.getFullYear(), firstVisible.getMonth(), firstVisible.getDate() + 41);
+				const query = new URLSearchParams({ from: dateKey(firstVisible), to: dateKey(lastVisible) });
+				try {
+					const response = await fetch(`/reminders-api?${query}`);
+					const data = await response.json();
+					if (!response.ok || !data.success || !Array.isArray(data.reminders)) {
+						throw new Error(data.message || "Unable to load calendar reminders.");
+					}
+					if (requestId !== calendarRequestId) return;
+					reminders = data.reminders;
+					renderCalendar();
+				} catch (error) {
+					if (requestId !== calendarRequestId) return;
+					console.error("Calendar reminder loading error:", error);
+					setStatus(error instanceof Error ? error.message : "Unable to load calendar reminders.", true);
+				}
+			}
+
+			function changeMonth(offset: number) {
+				visibleMonth = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() + offset, 1);
+				const lastDay = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth() + 1, 0).getDate();
+				selectedDate = new Date(visibleMonth.getFullYear(), visibleMonth.getMonth(), Math.min(selectedDate.getDate(), lastDay));
+				void loadCalendarReminders();
+			}
+
+			document.getElementById("previousMonth")?.addEventListener("click", () => changeMonth(-1));
+			document.getElementById("nextMonth")?.addEventListener("click", () => changeMonth(1));
+			document.getElementById("todayButton")?.addEventListener("click", () => {
+				selectedDate = new Date();
+				visibleMonth = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
+				void loadCalendarReminders();
+			});
+
+			document.getElementById("addCalendarReminder")?.addEventListener("click", () => {
+				calendarForm.hidden = false;
+				reminderDateInput.value = dateKey(selectedDate);
+				reminderTimeInput.value = "09:00";
+				(document.getElementById("calendarReminderTitle") as HTMLInputElement).focus();
+			});
+			document.getElementById("cancelCalendarReminder")?.addEventListener("click", () => {
+				calendarForm.reset();
+				calendarForm.hidden = true;
+				setStatus("");
+			});
+			calendarForm.addEventListener("submit", async (event) => {
+				event.preventDefault();
+				const formData = new FormData(calendarForm);
+				const submitButton = calendarForm.querySelector<HTMLButtonElement>('button[type="submit"]');
+				if (submitButton) submitButton.disabled = true;
+				try {
+					const response = await fetch("/reminders-api", {
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({
+							title: formData.get("title"),
+							description: formData.get("description"),
+							date: formData.get("date"),
+							time: formData.get("time")
+						})
+					});
+					const data = await response.json();
+					if (!response.ok || !data.success) throw new Error(data.message || "Unable to save reminder.");
+					selectedDate = parseDateKey(String(formData.get("date"))) || selectedDate;
+					calendarForm.reset();
+					calendarForm.hidden = true;
+					setStatus("Reminder saved.");
+					await loadCalendarReminders();
+				} catch (error) {
+					console.error("Calendar reminder creation error:", error);
+					setStatus(error instanceof Error ? error.message : "Unable to save reminder.", true);
+				} finally {
+					if (submitButton) submitButton.disabled = false;
+				}
+			});
+
+			colorSchemeQuery.addEventListener("change", () => {
+				if (root.dataset.themePreference === "system") {
+					root.dataset.theme = colorSchemeQuery.matches ? "dark" : "light";
+				}
+			});
+
+			const requestedDate = parseDateKey(new URLSearchParams(window.location.search).get("date") || "");
+			if (requestedDate) {
+				selectedDate = requestedDate;
+				visibleMonth = new Date(requestedDate.getFullYear(), requestedDate.getMonth(), 1);
+			}
+			void loadCalendarReminders();
+		</script>
+	</body>
+</html>

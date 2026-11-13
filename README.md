@@ -36,6 +36,10 @@ Before using note attachments, apply `migrations/note-attachments.sql` to the co
 
 Before using pinning or Favorites, apply `migrations/note-preferences.sql` to the configured MySQL database. Preferences are stored per signed-in user and note, including for notes shared with that user.
 
+## Calendar and reminders
+
+Before using the Calendar and Reminders pages, apply `migrations/reminders.sql` to the configured MySQL database after creating the existing `users` table. Reminder dates and times are stored in MySQL; theme preferences remain in browser storage. Due reminders are checked while the dashboard is open, and desktop notifications are optional.
+
 ## 🧞 Commands
 
 All commands are run from the root of the project, from a terminal:

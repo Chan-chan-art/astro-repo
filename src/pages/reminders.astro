@@ -1,0 +1,685 @@
+---
+import { pool } from '../lib/db';
+import WorkspaceNavigation from '../components/WorkspaceNavigation.astro';
+
+export const prerender = false;
+
+const sessionCookie = Astro.cookies.get("user_session");
+let sessionData: { username?: string } | null = null;
+if (sessionCookie?.value.trim()) {
+	try {
+		sessionData = sessionCookie.json();
+	} catch (error) {
+		console.error("Invalid session cookie JSON format:", error);
+		Astro.cookies.delete("user_session");
+	}
+}
+
+if (!sessionData?.username) return Astro.redirect('/');
+
+const [userRows]: any = await pool.execute(
+	'SELECT display_name, avatar_url FROM users WHERE BINARY username = ?',
+	[sessionData.username]
+);
+if (userRows.length !== 1) return Astro.redirect('/');
+const displayName = userRows[0].display_name || sessionData.username;
+const avatarUrl = userRows[0].avatar_url || "/default-avatar.png";
+---
+
+<!doctype html>
+<html lang="en">
+	<head>
+		<meta charset="utf-8" />
+		<meta name="viewport" content="width=device-width" />
+		<title>Reminders | Personal Notepad Workspace</title>
+		<style>
+			:root {
+				color-scheme: light;
+				--page-background: linear-gradient(135deg, #6a11cb 0%, #2575fc 100%);
+				--page-text: #fff;
+				--page-muted: rgba(255, 255, 255, 0.72);
+				--page-surface: rgba(255, 255, 255, 0.1);
+				--page-surface-soft: rgba(255, 255, 255, 0.07);
+				--page-border: rgba(255, 255, 255, 0.14);
+			}
+
+			:root[data-theme="dark"] {
+				color-scheme: dark;
+				--page-background: linear-gradient(135deg, #17132a 0%, #192447 55%, #202c5c 100%);
+				--page-text: #f5f3ff;
+				--page-muted: rgba(235, 231, 255, 0.72);
+				--page-surface: rgba(25, 23, 48, 0.82);
+				--page-surface-soft: rgba(255, 255, 255, 0.055);
+				--page-border: rgba(196, 181, 253, 0.2);
+			}
+
+			* { box-sizing: border-box; }
+
+			body {
+				min-height: 100vh;
+				margin: 0;
+				padding: 24px;
+				background: var(--page-background);
+				color: var(--page-text);
+				font-family: Arial, sans-serif;
+			}
+
+			.workspace-layout {
+				display: grid;
+				grid-template-columns: minmax(240px, 280px) minmax(0, 1fr);
+				gap: 24px;
+				width: min(1400px, 100%);
+				margin: 0 auto;
+				align-items: start;
+			}
+
+			.glass-card {
+				min-width: 0;
+				padding: 26px;
+				border: 1px solid var(--page-border);
+				border-radius: 24px;
+				background: var(--page-surface);
+				box-shadow: 0 8px 32px rgba(31, 38, 135, 0.25);
+				backdrop-filter: blur(12px);
+				-webkit-backdrop-filter: blur(12px);
+			}
+
+			.profile-card {
+				position: sticky;
+				top: 24px;
+				text-align: center;
+			}
+
+			.avatar {
+				width: 88px;
+				height: 88px;
+				border: 3px solid rgba(255, 255, 255, 0.45);
+				border-radius: 50%;
+				object-fit: cover;
+			}
+
+			.profile-card h1 {
+				margin: 10px 0 3px;
+				font-size: 20px;
+				overflow-wrap: anywhere;
+			}
+
+			.profile-card > p {
+				margin: 0;
+				color: var(--page-muted);
+				font-size: 12px;
+			}
+
+			.profile-edit-link {
+				display: inline-block;
+				margin-top: 12px;
+				color: #e2d5ff;
+				font-size: 11px;
+			}
+
+			.reminders-header {
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				gap: 12px;
+				margin-bottom: 20px;
+			}
+
+			.reminders-header h2 {
+				margin: 0;
+				font-size: clamp(22px, 4vw, 30px);
+			}
+
+			.reminders-header p {
+				margin: 6px 0 0;
+				color: var(--page-muted);
+				font-size: 13px;
+			}
+
+			button {
+				padding: 10px 14px;
+				border: 1px solid var(--page-border);
+				border-radius: 11px;
+				background: var(--page-surface-soft);
+				color: var(--page-text);
+				font: inherit;
+				font-size: 12px;
+				cursor: pointer;
+			}
+
+			button:hover { background: rgba(255, 255, 255, 0.18); }
+			button:disabled { cursor: wait; opacity: 0.65; }
+
+			.notification-settings {
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				gap: 12px;
+				margin: 0 0 18px;
+				padding: 13px 15px;
+				border: 1px solid var(--page-border);
+				border-radius: 14px;
+				background: var(--page-surface-soft);
+			}
+
+			.notification-settings p {
+				margin: 0;
+				color: var(--page-muted);
+				font-size: 12px;
+				line-height: 1.5;
+			}
+
+			.reminder-form-card {
+				margin-bottom: 24px;
+				padding: 18px;
+				border: 1px solid var(--page-border);
+				border-radius: 18px;
+				background: var(--page-surface-soft);
+			}
+
+			.reminder-form-card h3 {
+				margin: 0 0 14px;
+				font-size: 16px;
+			}
+
+			.reminder-form {
+				display: grid;
+				grid-template-columns: repeat(2, minmax(0, 1fr));
+				gap: 12px;
+			}
+
+			.reminder-form .wide { grid-column: 1 / -1; }
+
+			label {
+				display: block;
+				margin-bottom: 5px;
+				color: var(--page-muted);
+				font-size: 11px;
+			}
+
+			input,
+			textarea {
+				width: 100%;
+				padding: 10px 12px;
+				border: 1px solid var(--page-border);
+				border-radius: 10px;
+				background: rgba(255, 255, 255, 0.1);
+				color: var(--page-text);
+				font: inherit;
+				font-size: 13px;
+			}
+
+			textarea { min-height: 72px; resize: vertical; }
+
+			input:focus,
+			textarea:focus {
+				outline: 2px solid rgba(255, 255, 255, 0.5);
+				outline-offset: 1px;
+			}
+
+			.form-actions {
+				display: flex;
+				gap: 8px;
+			}
+
+			.form-actions button[type="submit"] {
+				background: #fff;
+				color: #6a11cb;
+				font-weight: 700;
+			}
+
+			.reminder-status {
+				min-height: 18px;
+				margin: 10px 0 0;
+				color: var(--page-muted);
+				font-size: 12px;
+			}
+
+			.reminder-status.error { color: #ffb4b4; }
+
+			.reminder-section { margin-top: 24px; }
+
+			.reminder-section h3 {
+				display: flex;
+				align-items: center;
+				gap: 8px;
+				margin: 0 0 12px;
+				font-size: 16px;
+			}
+
+			.reminder-section h3 span {
+				display: inline-grid;
+				place-items: center;
+				min-width: 22px;
+				height: 22px;
+				padding: 0 5px;
+				border-radius: 999px;
+				background: rgba(255, 255, 255, 0.15);
+				font-size: 10px;
+			}
+
+			.reminder-list {
+				display: grid;
+				gap: 10px;
+				padding: 0;
+				list-style: none;
+			}
+
+			.reminder-item {
+				display: flex;
+				align-items: flex-start;
+				justify-content: space-between;
+				gap: 14px;
+				padding: 14px;
+				border: 1px solid var(--page-border);
+				border-radius: 15px;
+				background: var(--page-surface-soft);
+			}
+
+			.reminder-item-main { min-width: 0; }
+
+			.reminder-item-main strong {
+				display: block;
+				font-size: 13px;
+				overflow-wrap: anywhere;
+			}
+
+			.reminder-item-main p {
+				margin: 6px 0 0;
+				color: var(--page-muted);
+				font-size: 12px;
+				white-space: pre-wrap;
+				overflow-wrap: anywhere;
+			}
+
+			.reminder-item-main time {
+				display: block;
+				margin-top: 7px;
+				color: var(--page-muted);
+				font-size: 11px;
+			}
+
+			.reminder-item-actions {
+				display: flex;
+				flex: 0 0 auto;
+				flex-wrap: wrap;
+				justify-content: flex-end;
+				gap: 6px;
+			}
+
+			.reminder-item-actions button {
+				padding: 7px 9px;
+				font-size: 10px;
+			}
+
+			.reminder-item-actions .delete-reminder {
+				border-color: rgba(255, 118, 117, 0.45);
+				background: rgba(255, 118, 117, 0.15);
+			}
+
+			.reminder-empty {
+				margin: 0;
+				padding: 14px;
+				border: 1px dashed var(--page-border);
+				border-radius: 12px;
+				color: var(--page-muted);
+				font-size: 12px;
+			}
+
+			:root[data-theme="dark"] .profile-edit-link { color: #c4b5fd; }
+
+			:root[data-theme="dark"] .form-actions button[type="submit"] {
+				border-color: #c4b5fd;
+				background: #c4b5fd;
+				color: #21143b;
+			}
+
+			:root[data-theme="dark"] input,
+			:root[data-theme="dark"] textarea {
+				background: rgba(9, 12, 30, 0.42);
+			}
+
+			@media (max-width: 900px) {
+				body { padding: 14px; }
+				.workspace-layout { grid-template-columns: 1fr; gap: 14px; }
+				.profile-card { position: static; }
+			}
+
+			@media (max-width: 600px) {
+				.glass-card { padding: 17px; border-radius: 19px; }
+				.reminders-header { align-items: flex-start; flex-direction: column; }
+				.reminder-form { grid-template-columns: 1fr; }
+				.reminder-form .wide { grid-column: auto; }
+				.reminder-item { flex-direction: column; }
+				.reminder-item-actions { justify-content: flex-start; }
+				.notification-settings { align-items: flex-start; flex-direction: column; }
+			}
+		</style>
+		<script is:inline>
+			(() => {
+				const key = "notepad-theme-preference";
+				let preference = "system";
+				try {
+					const saved = localStorage.getItem(key);
+					if (saved === "light" || saved === "dark" || saved === "system") preference = saved;
+				} catch (error) {
+					console.error("Unable to read the saved theme preference.", error);
+				}
+				const isDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+				document.documentElement.dataset.themePreference = preference;
+				document.documentElement.dataset.theme = preference === "system" ? (isDark ? "dark" : "light") : preference;
+			})();
+		</script>
+	</head>
+	<body>
+		<div class="workspace-layout">
+			<aside class="glass-card profile-card">
+				<img class="avatar" src={avatarUrl} alt="Profile" />
+				<h1>{displayName}</h1>
+				<p>Profile Station</p>
+				<a class="profile-edit-link" href="/dashboard#profileForm">Edit profile</a>
+				<WorkspaceNavigation currentPage="reminders" />
+			</aside>
+
+			<main class="glass-card">
+				<header class="reminders-header">
+					<div>
+						<h2>Reminders</h2>
+						<p>Create and manage upcoming tasks, overdue reminders, and completed history.</p>
+					</div>
+					<a class="profile-edit-link" href="/calendar">Open calendar</a>
+				</header>
+
+				<section class="notification-settings" aria-label="Browser notification settings">
+					<p id="notificationPermissionStatus">Due reminders are checked while the dashboard is open. Browser notifications are optional.</p>
+					<button type="button" id="enableNotifications">Enable browser notifications</button>
+				</section>
+
+				<section class="reminder-form-card" aria-labelledby="reminderFormHeading">
+					<h3 id="reminderFormHeading">Add a reminder</h3>
+					<form class="reminder-form" id="reminderForm">
+						<input type="hidden" name="id" />
+						<div class="wide">
+							<label for="reminderTitle">Title</label>
+							<input id="reminderTitle" name="title" maxlength="150" required />
+						</div>
+						<div>
+							<label for="reminderDate">Date</label>
+							<input id="reminderDate" name="date" type="date" required />
+						</div>
+						<div>
+							<label for="reminderTime">Time</label>
+							<input id="reminderTime" name="time" type="time" value="09:00" required />
+						</div>
+						<div class="wide">
+							<label for="reminderDescription">Description</label>
+							<textarea id="reminderDescription" name="description" maxlength="2000"></textarea>
+						</div>
+						<div class="form-actions wide">
+							<button type="submit" id="saveReminderButton">Save reminder</button>
+							<button type="button" id="cancelReminderEdit" hidden>Cancel edit</button>
+						</div>
+					</form>
+					<p class="reminder-status" id="reminderStatus" role="status" aria-live="polite"></p>
+				</section>
+
+				<section class="reminder-section" aria-labelledby="upcomingHeading">
+					<h3 id="upcomingHeading">Upcoming <span id="upcomingCount">0</span></h3>
+					<ul class="reminder-list" id="upcomingList"></ul>
+					<p class="reminder-empty" id="upcomingEmpty">No upcoming reminders.</p>
+				</section>
+				<section class="reminder-section" aria-labelledby="overdueHeading">
+					<h3 id="overdueHeading">Overdue <span id="overdueCount">0</span></h3>
+					<ul class="reminder-list" id="overdueList"></ul>
+					<p class="reminder-empty" id="overdueEmpty">No overdue reminders.</p>
+				</section>
+				<section class="reminder-section" aria-labelledby="completedHeading">
+					<h3 id="completedHeading">Completed <span id="completedCount">0</span></h3>
+					<ul class="reminder-list" id="completedList"></ul>
+					<p class="reminder-empty" id="completedEmpty">Completed reminders stay here as history.</p>
+				</section>
+			</main>
+		</div>
+
+		<script>
+			type Reminder = {
+				id: number | string;
+				title: string;
+				description: string;
+				date: string;
+				time: string;
+				completed: number | boolean;
+			};
+
+			const reminderForm = document.getElementById("reminderForm") as HTMLFormElement;
+			const reminderStatus = document.getElementById("reminderStatus")!;
+			const saveReminderButton = document.getElementById("saveReminderButton") as HTMLButtonElement;
+			const cancelReminderEdit = document.getElementById("cancelReminderEdit") as HTMLButtonElement;
+			const notificationStatus = document.getElementById("notificationPermissionStatus")!;
+			const editIdInput = reminderForm.elements.namedItem("id") as HTMLInputElement;
+			const dateInput = reminderForm.elements.namedItem("date") as HTMLInputElement;
+			let reminders: Reminder[] = [];
+			let editingCompleted = false;
+			let initialReminderOpened = false;
+
+			function localDateKey(date: Date) {
+				return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+			}
+
+			function scheduledDate(reminder: Reminder) {
+				return new Date(`${reminder.date}T${reminder.time}:00`);
+			}
+
+			function setStatus(message: string, isError = false) {
+				reminderStatus.textContent = message;
+				reminderStatus.classList.toggle("error", isError);
+			}
+
+			function clearForm() {
+				reminderForm.reset();
+				editIdInput.value = "";
+				dateInput.value = new URLSearchParams(location.search).get("date") || localDateKey(new Date());
+				(reminderForm.elements.namedItem("time") as HTMLInputElement).value = "09:00";
+				editingCompleted = false;
+				document.getElementById("reminderFormHeading")!.textContent = "Add a reminder";
+				saveReminderButton.textContent = "Save reminder";
+				cancelReminderEdit.hidden = true;
+			}
+
+			function beginEdit(reminder: Reminder) {
+				editIdInput.value = String(reminder.id);
+				(reminderForm.elements.namedItem("title") as HTMLInputElement).value = reminder.title;
+				(reminderForm.elements.namedItem("description") as HTMLTextAreaElement).value = reminder.description || "";
+				dateInput.value = reminder.date;
+				(reminderForm.elements.namedItem("time") as HTMLInputElement).value = reminder.time;
+				editingCompleted = Boolean(Number(reminder.completed));
+				document.getElementById("reminderFormHeading")!.textContent = "Edit reminder";
+				saveReminderButton.textContent = "Save changes";
+				cancelReminderEdit.hidden = false;
+				setStatus("");
+				reminderForm.scrollIntoView({ behavior: "smooth", block: "center" });
+				(reminderForm.elements.namedItem("title") as HTMLInputElement).focus();
+			}
+
+			function buildReminderItem(reminder: Reminder) {
+				const item = document.createElement("li");
+				item.className = "reminder-item";
+				const main = document.createElement("div");
+				main.className = "reminder-item-main";
+				const title = document.createElement("strong");
+				title.textContent = reminder.title;
+				main.append(title);
+				if (reminder.description) {
+					const description = document.createElement("p");
+					description.textContent = reminder.description;
+					main.append(description);
+				}
+				const time = document.createElement("time");
+				const date = scheduledDate(reminder);
+				time.dateTime = `${reminder.date}T${reminder.time}`;
+				time.textContent = date.toLocaleString();
+				main.append(time);
+
+				const actions = document.createElement("div");
+				actions.className = "reminder-item-actions";
+				const completed = Boolean(Number(reminder.completed));
+				const completionButton = document.createElement("button");
+				completionButton.type = "button";
+				completionButton.textContent = completed ? "Restore" : "Complete";
+				completionButton.addEventListener("click", () => void setReminderCompleted(reminder, !completed));
+				const editButton = document.createElement("button");
+				editButton.type = "button";
+				editButton.textContent = "Edit";
+				editButton.addEventListener("click", () => beginEdit(reminder));
+				const deleteButton = document.createElement("button");
+				deleteButton.type = "button";
+				deleteButton.className = "delete-reminder";
+				deleteButton.textContent = "Delete";
+				deleteButton.addEventListener("click", () => void deleteReminder(reminder));
+				actions.append(completionButton, editButton, deleteButton);
+				item.append(main, actions);
+				return item;
+			}
+
+			function renderReminders() {
+				const groups = {
+					upcoming: reminders.filter((reminder) => !Boolean(Number(reminder.completed)) && scheduledDate(reminder).getTime() >= Date.now()),
+					overdue: reminders.filter((reminder) => !Boolean(Number(reminder.completed)) && scheduledDate(reminder).getTime() < Date.now()),
+					completed: reminders.filter((reminder) => Boolean(Number(reminder.completed)))
+				};
+				const sorted = {
+					upcoming: groups.upcoming.sort((a, b) => scheduledDate(a).getTime() - scheduledDate(b).getTime()),
+					overdue: groups.overdue.sort((a, b) => scheduledDate(b).getTime() - scheduledDate(a).getTime()),
+					completed: groups.completed.sort((a, b) => scheduledDate(b).getTime() - scheduledDate(a).getTime())
+				};
+
+				for (const section of ["upcoming", "overdue", "completed"] as const) {
+					const list = document.getElementById(`${section}List`)!;
+					const empty = document.getElementById(`${section}Empty`)!;
+					const count = document.getElementById(`${section}Count`)!;
+					list.replaceChildren(...sorted[section].map(buildReminderItem));
+					empty.hidden = sorted[section].length > 0;
+					count.textContent = String(sorted[section].length);
+				}
+			}
+
+			async function loadReminders() {
+				try {
+					const response = await fetch("/reminders-api");
+					const data = await response.json();
+					if (!response.ok || !data.success || !Array.isArray(data.reminders)) {
+						throw new Error(data.message || "Unable to load reminders.");
+					}
+					reminders = data.reminders;
+					renderReminders();
+					const reminderId = new URLSearchParams(location.search).get("id");
+					const requested = reminders.find((reminder) => String(reminder.id) === reminderId);
+					if (requested && !initialReminderOpened) {
+						initialReminderOpened = true;
+						beginEdit(requested);
+					}
+				} catch (error) {
+					console.error("Reminder loading error:", error);
+					setStatus(error instanceof Error ? error.message : "Unable to load reminders.", true);
+				}
+			}
+
+			async function setReminderCompleted(reminder: Reminder, completed: boolean) {
+				try {
+					const response = await fetch(`/reminders-api?id=${encodeURIComponent(String(reminder.id))}`, {
+						method: "PUT",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({ completed })
+					});
+					const data = await response.json();
+					if (!response.ok || !data.success) throw new Error(data.message || "Unable to update reminder.");
+					setStatus(completed ? "Reminder completed." : "Reminder restored.");
+					await loadReminders();
+				} catch (error) {
+					console.error("Reminder completion update error:", error);
+					setStatus(error instanceof Error ? error.message : "Unable to update reminder.", true);
+				}
+			}
+
+			async function deleteReminder(reminder: Reminder) {
+				if (!window.confirm(`Delete "${reminder.title}"?`)) return;
+				try {
+					const response = await fetch(`/reminders-api?id=${encodeURIComponent(String(reminder.id))}`, {
+						method: "DELETE"
+					});
+					const data = await response.json();
+					if (!response.ok || !data.success) throw new Error(data.message || "Unable to delete reminder.");
+					setStatus("Reminder deleted.");
+					await loadReminders();
+				} catch (error) {
+					console.error("Reminder deletion error:", error);
+					setStatus(error instanceof Error ? error.message : "Unable to delete reminder.", true);
+				}
+			}
+
+			reminderForm.addEventListener("submit", async (event) => {
+				event.preventDefault();
+				saveReminderButton.disabled = true;
+				const formData = new FormData(reminderForm);
+				const reminderId = editIdInput.value;
+				const payload = {
+					title: formData.get("title"),
+					description: formData.get("description"),
+					date: formData.get("date"),
+					time: formData.get("time"),
+					...(editingCompleted ? { completed: true } : {})
+				};
+				try {
+					const response = await fetch(reminderId ? `/reminders-api?id=${encodeURIComponent(reminderId)}` : "/reminders-api", {
+						method: reminderId ? "PUT" : "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify(payload)
+					});
+					const data = await response.json();
+					if (!response.ok || !data.success) throw new Error(data.message || "Unable to save reminder.");
+					clearForm();
+					setStatus(reminderId ? "Reminder updated." : "Reminder added.");
+					await loadReminders();
+				} catch (error) {
+					console.error("Reminder save error:", error);
+					setStatus(error instanceof Error ? error.message : "Unable to save reminder.", true);
+				} finally {
+					saveReminderButton.disabled = false;
+				}
+			});
+
+			cancelReminderEdit.addEventListener("click", () => {
+				clearForm();
+				setStatus("");
+			});
+
+			document.getElementById("enableNotifications")?.addEventListener("click", async () => {
+				if (!("Notification" in window)) {
+					notificationStatus.textContent = "This browser does not support desktop notifications.";
+					return;
+				}
+				try {
+					const permission = await Notification.requestPermission();
+					notificationStatus.textContent = permission === "granted"
+						? "Browser notifications enabled. Due reminders appear while the dashboard is open."
+						: permission === "denied"
+							? "Browser notifications are blocked. You can still see due reminders in the dashboard."
+							: "Notification permission was not granted.";
+				} catch (error) {
+					console.error("Browser notification permission request failed:", error);
+					notificationStatus.textContent = "Unable to request browser notification permission.";
+				}
+			});
+
+			if ("Notification" in window) {
+				notificationStatus.textContent = Notification.permission === "granted"
+					? "Browser notifications are enabled for due reminders while the dashboard is open."
+					: "Due reminders are checked while the dashboard is open. Browser notifications are optional.";
+			}
+
+			clearForm();
+			void loadReminders();
+			window.setInterval(renderReminders, 60000);
+		</script>
+	</body>
+</html>

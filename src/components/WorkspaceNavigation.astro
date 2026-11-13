@@ -1,0 +1,167 @@
+---
+interface Props {
+	currentPage: "dashboard" | "calendar" | "reminders";
+	showPreferences?: boolean;
+	showLogout?: boolean;
+}
+
+const { currentPage, showPreferences = true, showLogout = true } = Astro.props;
+---
+
+<nav class="workspace-navigation" aria-label="Workspace navigation">
+	<h2>Workspace Navigation</h2>
+	<div class="workspace-navigation-links">
+		<a href="/dashboard" aria-current={currentPage === "dashboard" ? "page" : undefined}>Dashboard</a>
+		<a href="/dashboard#addNoteForm">My Notes</a>
+		<a href="/dashboard?filter=favorites#notes">Favorites</a>
+		<a href="/dashboard?filter=pinned#notes">Pinned Notes</a>
+		<a href="/calendar" aria-current={currentPage === "calendar" ? "page" : undefined}>Calendar</a>
+		<a href="/reminders" aria-current={currentPage === "reminders" ? "page" : undefined}>Reminders</a>
+	</div>
+
+	{showPreferences && (
+		<section class="workspace-navigation-preferences" aria-labelledby="workspacePreferencesHeading">
+			<h2 id="workspacePreferencesHeading">Preferences</h2>
+			<label class="workspace-dark-toggle">
+				<span>Dark Mode</span>
+				<input type="checkbox" data-workspace-theme-toggle aria-label="Toggle dark mode" />
+			</label>
+			<p class="workspace-theme-status" data-workspace-theme-status role="status" aria-live="polite"></p>
+			<a class="workspace-settings-link" href="/dashboard#dashboardSettingsHeading">Settings</a>
+		</section>
+	)}
+
+	{showLogout && (
+		<form action="/logout-api" method="POST" class="workspace-logout-form">
+			<button type="submit">Log Out</button>
+		</form>
+	)}
+</nav>
+
+<script>
+	const colorSchemeQuery = window.matchMedia("(prefers-color-scheme: dark)");
+	const root = document.documentElement;
+	const themeToggle = document.querySelector<HTMLInputElement>("[data-workspace-theme-toggle]");
+	const themeStatus = document.querySelector<HTMLElement>("[data-workspace-theme-status]");
+
+	function syncWorkspaceThemeToggle() {
+		if (themeToggle) themeToggle.checked = root.dataset.theme === "dark";
+	}
+
+	syncWorkspaceThemeToggle();
+
+	themeToggle?.addEventListener("change", () => {
+		const preference = themeToggle.checked ? "dark" : "light";
+		root.dataset.themePreference = preference;
+		root.dataset.theme = preference;
+
+		try {
+			localStorage.setItem("notepad-theme-preference", preference);
+			if (themeStatus) themeStatus.textContent = "";
+		} catch (error) {
+			console.error("Unable to save the theme preference.", error);
+			if (themeStatus) themeStatus.textContent = "Theme changed, but the preference could not be saved.";
+		}
+	});
+
+	colorSchemeQuery.addEventListener("change", () => {
+		if (root.dataset.themePreference === "system") {
+			root.dataset.theme = colorSchemeQuery.matches ? "dark" : "light";
+			syncWorkspaceThemeToggle();
+		}
+	});
+</script>
+
+<style>
+	.workspace-navigation {
+		margin-top: 20px;
+		text-align: left;
+	}
+
+	.workspace-navigation h2 {
+		margin: 0 0 10px;
+		font-size: 13px;
+		text-align: left;
+	}
+
+	.workspace-navigation-links {
+		display: grid;
+		gap: 6px;
+	}
+
+	.workspace-navigation-links a,
+	.workspace-settings-link {
+		display: block;
+		padding: 9px 12px;
+		border: 1px solid var(--dashboard-border, rgba(255, 255, 255, 0.12));
+		border-radius: 11px;
+		background: var(--dashboard-surface-soft, rgba(255, 255, 255, 0.07));
+		color: var(--dashboard-text, #fff);
+		font-size: 12px;
+		text-decoration: none;
+		transition: background-color 0.2s ease, transform 0.2s ease;
+	}
+
+	.workspace-navigation-links a:hover,
+	.workspace-settings-link:hover {
+		background: var(--dashboard-surface-hover, rgba(255, 255, 255, 0.2));
+		transform: translateX(2px);
+	}
+
+	.workspace-navigation-links a[aria-current="page"] {
+		border-color: #fff;
+		background: #fff;
+		color: #6a11cb;
+		font-weight: 700;
+	}
+
+	.workspace-navigation-preferences {
+		margin-top: 20px;
+		padding-top: 14px;
+		border-top: 1px solid var(--dashboard-border, rgba(255, 255, 255, 0.12));
+	}
+
+	.workspace-navigation-preferences h2 {
+		margin-bottom: 8px;
+	}
+
+	.workspace-theme-status {
+		margin: -6px 0 8px;
+		color: #ffd2d2;
+		font-size: 10px;
+	}
+
+	.workspace-dark-toggle {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 10px;
+		padding: 7px 2px 12px;
+		font-size: 12px;
+		cursor: pointer;
+	}
+
+	.workspace-dark-toggle input {
+		width: 18px !important;
+		height: 18px;
+		margin: 0;
+		accent-color: #9b7cf6;
+		cursor: pointer;
+	}
+
+	.workspace-logout-form {
+		margin-top: 8px;
+	}
+
+	.workspace-logout-form button {
+		width: 100%;
+		padding: 11px;
+		border: 1px solid var(--dashboard-border, rgba(255, 255, 255, 0.2));
+		border-radius: 20px;
+		background: rgba(255, 255, 255, 0.15);
+		color: var(--dashboard-text, #fff);
+		font-size: 12px;
+		font-weight: 700;
+		cursor: pointer;
+	}
+</style>

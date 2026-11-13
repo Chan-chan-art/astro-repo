@@ -1,6 +1,7 @@
 ---
 // src/pages/dashboard.astro
 import { pool } from '../lib/db';
+import WorkspaceNavigation from '../components/WorkspaceNavigation.astro';
 export const prerender = false;
 
 const sessionCookie = Astro.cookies.get("user_session");
@@ -109,6 +110,47 @@ const noteStatistics = userNotes.reduce(
   },
   { total: 0, general: 0, work: 0, personal: 0, ideas: 0 }
 );
+
+let upcomingReminders: Array<{ id: number; title: string; description: string; date: string; time: string }> = [];
+if (userId) {
+  try {
+    const [reminderRows]: any = await pool.execute(
+      `SELECT id, title, description,
+              DATE_FORMAT(scheduled_at, '%Y-%m-%d') AS date,
+              TIME_FORMAT(scheduled_at, '%H:%i') AS time
+       FROM reminders
+       WHERE user_id = ? AND is_completed = 0 AND scheduled_at >= NOW()
+       ORDER BY scheduled_at ASC
+       LIMIT 5`,
+      [userId]
+    );
+    upcomingReminders = reminderRows;
+  } catch (error) {
+    console.error("Dashboard upcoming reminders fetch error:", error);
+  }
+}
+
+const miniCalendarMonth = new Date();
+const miniCalendarFirstDay = new Date(
+  miniCalendarMonth.getFullYear(),
+  miniCalendarMonth.getMonth(),
+  1
+).getDay();
+const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
+  const date = new Date(
+    miniCalendarMonth.getFullYear(),
+    miniCalendarMonth.getMonth(),
+    index - miniCalendarFirstDay + 1
+  );
+  const dateKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+  return {
+    date,
+    dateKey,
+    inMonth: date.getMonth() === miniCalendarMonth.getMonth(),
+    isToday: dateKey === `${miniCalendarMonth.getFullYear()}-${String(miniCalendarMonth.getMonth() + 1).padStart(2, "0")}-${String(miniCalendarMonth.getDate()).padStart(2, "0")}`,
+    hasReminder: upcomingReminders.some((reminder) => reminder.date === dateKey)
+  };
+});
 ---
 
 <!doctype html>
@@ -119,15 +161,28 @@ const noteStatistics = userNotes.reduce(
 		<title>Dashboard Portal</title>
 		<style>
 
+	:root {
+		color-scheme: light;
+		--dashboard-background: linear-gradient(135deg, #6a11cb 0%, #2575fc 100%);
+		--dashboard-text: #fff;
+		--dashboard-surface: rgba(255, 255, 255, 0.1);
+		--dashboard-surface-soft: rgba(255, 255, 255, 0.07);
+		--dashboard-surface-hover: rgba(255, 255, 255, 0.2);
+		--dashboard-border: rgba(255, 255, 255, 0.12);
+		--dashboard-muted: rgba(255, 255, 255, 0.72);
+		--dashboard-input-background: rgba(255, 255, 255, 0.12);
+		--dashboard-input-text: #fff;
+	}
+
 	body {
 	margin: 0;
 	display: flex;
 	justify-content: center;
 	align-items: flex-start; /* Switch from center to flex-start so long mobile pages scroll cleanly from the top down */
 	min-height: 100vh;
-	background: linear-gradient(135deg, #6a11cb 0%, #2575fc 100%);
+	background: var(--dashboard-background);
 	font-family: Arial, sans-serif;
-	color: #fff;
+	color: var(--dashboard-text);
 	padding: 15px; /* Compressed padding for mobile edge-clearance */
 	box-sizing: border-box;
 }
@@ -167,13 +222,13 @@ const noteStatistics = userNotes.reduce(
 
 /* 🎨 Shared Base Adjustments for Glass Cards */
 .glass-card {
-	background: rgba(255, 255, 255, 0.1);
+	background: var(--dashboard-surface);
 	backdrop-filter: blur(12px);
 	-webkit-backdrop-filter: blur(12px);
 	padding: 25px; /* Slightly tighter internal padding optimized for mobile viewports */
 	border-radius: 25px;
 	box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.37);
-	border: 1px solid rgba(255, 255, 255, 0.12);
+	border: 1px solid var(--dashboard-border);
 	box-sizing: border-box;
 	width: 100%;
 }
@@ -197,6 +252,23 @@ const noteStatistics = userNotes.reduce(
 	.profile-card {
 		position: static; /* Disables sticky tracking on mobile devices so it scrolls naturally with the document flow */
 	}
+}
+
+.btn-edit-profile {
+	display: inline-block;
+	width: auto;
+	margin: -6px 0 12px;
+	padding: 7px 12px;
+	border: 1px solid rgba(255, 255, 255, 0.25);
+	border-radius: 20px;
+	background: rgba(255, 255, 255, 0.12);
+	color: #fff;
+	font-size: 11px;
+	text-decoration: none;
+}
+
+.btn-edit-profile:hover {
+	background: rgba(255, 255, 255, 0.22);
 }
 
 
@@ -955,6 +1027,20 @@ const noteStatistics = userNotes.reduce(
 	font-size: 12px;
 }
 
+.profile-settings-dialog {
+	width: min(520px, 92vw);
+}
+
+.profile-settings-dialog .profile-form-box {
+	margin: 0;
+	padding: 0;
+	border: 0;
+}
+
+.profile-settings-dialog .profile-dialog-close {
+	flex: 0 0 auto;
+}
+
 .note-edit-form {
 	display: grid;
 	gap: 12px;
@@ -1403,7 +1489,346 @@ const noteStatistics = userNotes.reduce(
 	color: #fff !important;
 }
 
+/* Dashboard theme preferences */
+.settings-panel {
+	margin-top: 20px;
+	padding: 16px;
+	border: 1px solid var(--dashboard-border);
+	border-radius: 16px;
+	background: var(--dashboard-surface-soft);
+	text-align: left;
+}
+
+.settings-panel h2 {
+	margin: 0 0 4px;
+	font-size: 15px;
+}
+
+.settings-panel p {
+	margin: 0 0 12px;
+	color: var(--dashboard-muted);
+	font-size: 11px;
+	line-height: 1.5;
+}
+
+.settings-panel > label {
+	margin: 0 0 6px;
+	color: var(--dashboard-muted);
+	font-size: 11px;
+}
+
+.settings-panel select {
+	width: 100%;
+	padding: 10px 12px;
+	border: 1px solid var(--dashboard-border);
+	border-radius: 10px;
+	background: var(--dashboard-input-background);
+	color: var(--dashboard-input-text);
+	font: inherit;
+	font-size: 13px;
+}
+
+.settings-panel select option {
+	background: #3a118c;
+	color: #fff;
+}
+
+.theme-toggle-row {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 12px;
+	margin-top: 14px;
+	color: var(--dashboard-text);
+	font-size: 13px;
+	cursor: pointer;
+}
+
+.theme-toggle-row input {
+	width: 18px;
+	height: 18px;
+	margin: 0;
+	accent-color: #9b7cf6;
+	cursor: pointer;
+}
+
+:root[data-theme="dark"] {
+	color-scheme: dark;
+	--dashboard-background: linear-gradient(135deg, #17132a 0%, #192447 55%, #202c5c 100%);
+	--dashboard-text: #f5f3ff;
+	--dashboard-surface: rgba(25, 23, 48, 0.78);
+	--dashboard-surface-soft: rgba(255, 255, 255, 0.055);
+	--dashboard-surface-hover: rgba(255, 255, 255, 0.11);
+	--dashboard-border: rgba(196, 181, 253, 0.2);
+	--dashboard-muted: rgba(235, 231, 255, 0.72);
+	--dashboard-input-background: rgba(9, 12, 30, 0.42);
+	--dashboard-input-text: #f5f3ff;
+}
+
+:root[data-theme="dark"] .glass-card {
+	box-shadow: 0 8px 32px rgba(4, 7, 24, 0.42);
+}
+
+:root[data-theme="dark"] .add-note-form,
+:root[data-theme="dark"] .note-item,
+:root[data-theme="dark"] .dashboard-stat-card,
+:root[data-theme="dark"] .note-skeleton,
+:root[data-theme="dark"] .comment-bubble,
+:root[data-theme="dark"] .chat-composer-field,
+:root[data-theme="dark"] .settings-panel {
+	background-color: var(--dashboard-surface-soft);
+	border-color: var(--dashboard-border);
+}
+
+:root[data-theme="dark"] .form-group input,
+:root[data-theme="dark"] .form-group textarea,
+:root[data-theme="dark"] .search-wrapper input,
+:root[data-theme="dark"] .select-category,
+:root[data-theme="dark"] .note-edit-form input,
+:root[data-theme="dark"] .note-edit-form textarea,
+:root[data-theme="dark"] .note-edit-form select,
+:root[data-theme="dark"] .note-share-form input,
+:root[data-theme="dark"] .settings-panel select {
+	background-color: var(--dashboard-input-background);
+	border-color: var(--dashboard-border);
+	color: var(--dashboard-input-text);
+}
+
+:root[data-theme="dark"] input::placeholder,
+:root[data-theme="dark"] textarea::placeholder {
+	color: rgba(235, 231, 255, 0.58);
+}
+
+:root[data-theme="dark"] .select-category option,
+:root[data-theme="dark"] .note-edit-form select option,
+:root[data-theme="dark"] .settings-panel select option {
+	background: #211b36;
+	color: #f5f3ff;
+}
+
+:root[data-theme="dark"] .tab-btn,
+:root[data-theme="dark"] .note-card-actions button,
+:root[data-theme="dark"] .note-attachment-controls button,
+:root[data-theme="dark"] .note-dialog button,
+:root[data-theme="dark"] .note-share-form button,
+:root[data-theme="dark"] .btn-clear-profile,
+:root[data-theme="dark"] .btn-share-note {
+	border-color: var(--dashboard-border);
+	background-color: var(--dashboard-surface-soft);
+	color: var(--dashboard-text);
+}
+
+:root[data-theme="dark"] .tab-btn:hover,
+:root[data-theme="dark"] .note-card-actions button:hover,
+:root[data-theme="dark"] .note-attachment-controls button:hover,
+:root[data-theme="dark"] .note-dialog button:hover {
+	background-color: var(--dashboard-surface-hover);
+}
+
+:root[data-theme="dark"] .tab-btn.active,
+:root[data-theme="dark"] .btn-submit,
+:root[data-theme="dark"] .btn-add-note,
+:root[data-theme="dark"] .comment-input-box-row button {
+	border-color: #c4b5fd;
+	background: #c4b5fd;
+	color: #21143b;
+}
+
+:root[data-theme="dark"] .note-dialog {
+	border-color: var(--dashboard-border);
+	background: #211b36;
+	color: var(--dashboard-text);
+}
+
+:root[data-theme="dark"] .btn-edit-profile {
+	border-color: var(--dashboard-border);
+	background: var(--dashboard-surface-soft);
+	color: var(--dashboard-text);
+}
+
+:root[data-theme="dark"] .image-preview-dialog {
+	border-color: var(--dashboard-border);
+	background: #17132a;
+	color: var(--dashboard-text);
+}
+
+:root[data-theme="dark"] .note-date,
+:root[data-theme="dark"] .dashboard-stat-card span,
+:root[data-theme="dark"] .note-attachment-status,
+:root[data-theme="dark"] .note-dialog-date,
+:root[data-theme="dark"] .note-edit-form label,
+:root[data-theme="dark"] .settings-panel > label,
+:root[data-theme="dark"] .note-activity {
+	color: var(--dashboard-muted);
+}
+
+.dashboard-productivity {
+	display: grid;
+	grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+	gap: 14px;
+	margin-top: 18px;
+}
+
+.dashboard-utility-card {
+	min-width: 0;
+	padding: 16px;
+	border: 1px solid var(--dashboard-border);
+	border-radius: 18px;
+	background: var(--dashboard-surface-soft);
+}
+
+.dashboard-utility-header {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 8px;
+	margin-bottom: 12px;
+}
+
+.dashboard-utility-header h3 {
+	margin: 0;
+	font-size: 15px;
+}
+
+.dashboard-utility-header a,
+.upcoming-reminder-link {
+	color: #e2d5ff;
+	font-size: 11px;
+	text-decoration: none;
+}
+
+.mini-calendar-grid {
+	display: grid;
+	grid-template-columns: repeat(7, minmax(0, 1fr));
+	gap: 3px;
+}
+
+.mini-calendar-weekday,
+.mini-calendar-day {
+	display: grid;
+	place-items: center;
+	min-width: 0;
+	aspect-ratio: 1;
+	border-radius: 8px;
+	font-size: 10px;
+}
+
+.mini-calendar-weekday {
+	color: var(--dashboard-muted);
+	font-weight: 700;
+}
+
+.mini-calendar-day {
+	position: relative;
+	color: var(--dashboard-text);
+	text-decoration: none;
+}
+
+.mini-calendar-day.outside-month {
+	opacity: 0.35;
+}
+
+.mini-calendar-day.today {
+	background: #fff;
+	color: #6a11cb;
+	font-weight: 700;
+}
+
+.mini-calendar-day.has-reminders::after {
+	position: absolute;
+	right: 3px;
+	bottom: 3px;
+	width: 4px;
+	height: 4px;
+	border-radius: 50%;
+	background: #a1c4fd;
+	content: "";
+}
+
+.mini-calendar-day:hover {
+	background: var(--dashboard-surface-hover);
+}
+
+.mini-calendar-day.today:hover {
+	background: #fff;
+	color: #6a11cb;
+}
+
+.upcoming-reminder-list {
+	display: grid;
+	gap: 8px;
+	margin: 0;
+	padding: 0;
+	list-style: none;
+}
+
+.upcoming-reminder-item {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 8px;
+	padding: 9px 10px;
+	border: 1px solid var(--dashboard-border);
+	border-radius: 11px;
+	background: var(--dashboard-surface-soft);
+}
+
+.upcoming-reminder-item strong,
+.upcoming-reminder-item time {
+	display: block;
+	font-size: 11px;
+}
+
+.upcoming-reminder-item time,
+.upcoming-reminder-empty {
+	margin-top: 3px;
+	color: var(--dashboard-muted);
+	font-size: 10px;
+}
+
+.upcoming-reminder-empty {
+	margin: 0;
+}
+
+@media (max-width: 700px) {
+	.dashboard-productivity {
+		grid-template-columns: 1fr;
+	}
+}
+
+:root[data-theme="dark"] .dashboard-utility-card,
+:root[data-theme="dark"] .upcoming-reminder-item {
+	background: var(--dashboard-surface-soft);
+	border-color: var(--dashboard-border);
+}
+
+:root[data-theme="dark"] .dashboard-utility-header a,
+:root[data-theme="dark"] .upcoming-reminder-link {
+	color: #c4b5fd;
+}
+
 		</style>
+		<script is:inline>
+			(() => {
+				const storageKey = "notepad-theme-preference";
+				const validPreferences = ["light", "dark", "system"];
+				let preference = "system";
+
+				try {
+					const storedPreference = localStorage.getItem(storageKey);
+					if (storedPreference && validPreferences.includes(storedPreference)) {
+						preference = storedPreference;
+					}
+				} catch (error) {
+					console.error("Unable to read the saved theme preference.", error);
+				}
+
+				const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+				document.documentElement.dataset.themePreference = preference;
+				document.documentElement.dataset.theme =
+					preference === "system" ? (prefersDark ? "dark" : "light") : preference;
+			})();
+		</script>
 	</head>	
 
 		
@@ -1416,70 +1841,90 @@ const noteStatistics = userNotes.reduce(
 				<img src={avatarUrl} alt="Avatar" class="avatar-preview" />
 				<h1 style="font-size:22px; margin: 10px 0 2px 0;">{greetingName}</h1>
 				<p style="font-size:12px; margin-bottom:15px;">Profile Station</p>
+				<button type="button" class="btn-edit-profile" id="openProfileDialog" aria-haspopup="dialog" aria-controls="profileSettingsDialog">Edit Profile</button>
+				<WorkspaceNavigation currentPage="dashboard" showPreferences={false} showLogout={false} />
 				
-				<div class="form-box" style="text-align: left;">
-					<form id="profileForm" enctype="multipart/form-data">
-						<input type="hidden" id="compressedAvatarString" name="compressedAvatarString" value="" />
-						<!-- 1. Avatar File Picker Group -->
-						<div class="form-group" style="margin-bottom: 12px;">
-							<label for="avatarFileInput">Avatar Photo</label>
-							<input 
-								type="file" 
-								id="avatarFileInput" 
-								name="avatarFile" 
-								accept="image/*" 
-								style="background:transparent; font-size:11px;" 
-							/>
-						</div>
-
-						<!-- 2. Display Name Group -->
-						<div class="form-group" style="margin-bottom: 12px;">
-							<label for="profileDisplayName">
-								Display Name 
-								<span class="char-counter" id="displayNameCounter">(0 / 50)</span>
-							</label>
-							<input 
-								type="text" 
-								id="profileDisplayName"
-								name="displayName" 
-								value={displayName} 
-								maxlength="50"
-							/>
-						</div>
-
-						<!-- 3. Location Group -->
-						<div class="form-group" style="margin-bottom: 12px;">
-							<label for="profileLocation">Location</label>
-							<input 
-								type="text" 
-								id="profileLocation"
-								name="address" 
-								value={address} 
-							/>
-						</div>
-
-						<!-- 4. Bio Textarea Group -->
-						<div class="form-group" style="margin-bottom: 12px;">
-							<label for="profileBio">
-								Bio 
-								<span class="char-counter" id="bioCounter">(0 / 250)</span>
-							</label>
-							<textarea id="profileBio" name="bio" maxlength="250" placeholder="Tell us about yourself...">{bio}</textarea>
-						</div>
-
-						<!-- 5. Form Control Action Buttons Split Row -->
-						<div style="display: grid; grid-template-columns: 1fr auto; gap: 10px; margin-top: 15px;">
-							<button type="submit" class="btn-submit" style="margin: 0;">Save Profile</button>
-							<button type="button" id="clearProfileBtn" class="btn-clear-profile" title="Wipe form fields" style="margin: 0; padding: 0 15px;">Wipe</button>
-						</div>
-					</form>
-				</div>
+				<section class="settings-panel" aria-labelledby="dashboardSettingsHeading">
+					<h2 id="dashboardSettingsHeading">Dashboard Settings</h2>
+					<p>Choose how your workspace looks. System follows your device preference.</p>
+					<label for="themePreference">Theme</label>
+					<select id="themePreference" name="themePreference">
+						<option value="light">Light</option>
+						<option value="dark">Dark</option>
+						<option value="system">System</option>
+					</select>
+					<label class="theme-toggle-row" for="darkModeToggle">
+						<span>Dark mode</span>
+						<input type="checkbox" id="darkModeToggle" />
+					</label>
+				</section>
 				
 				<!-- Separate Secure Logout Action -->
 				<form action="/logout-api" method="POST">
 					<button type="submit" class="btn-logout">Log Out</button>
 				</form>
 			</div>
+
+			<dialog id="profileSettingsDialog" class="note-dialog profile-settings-dialog" aria-labelledby="profileSettingsHeading">
+				<div class="note-dialog-content">
+					<div class="note-dialog-header">
+						<h2 id="profileSettingsHeading">Edit Profile</h2>
+						<button type="button" class="profile-dialog-close" data-close-note-dialog aria-label="Close profile settings">Close</button>
+					</div>
+					<div class="form-box profile-form-box" style="text-align: left;">
+						<form id="profileForm" enctype="multipart/form-data">
+							<input type="hidden" id="compressedAvatarString" name="compressedAvatarString" value="" />
+							<div class="form-group" style="margin-bottom: 12px;">
+								<label for="avatarFileInput">Avatar Photo</label>
+								<input
+									type="file"
+									id="avatarFileInput"
+									name="avatarFile"
+									accept="image/*"
+									style="background:transparent; font-size:11px;"
+								/>
+							</div>
+
+							<div class="form-group" style="margin-bottom: 12px;">
+								<label for="profileDisplayName">
+									Display Name
+									<span class="char-counter" id="displayNameCounter">(0 / 50)</span>
+								</label>
+								<input
+									type="text"
+									id="profileDisplayName"
+									name="displayName"
+									value={displayName}
+									maxlength="50"
+								/>
+							</div>
+
+							<div class="form-group" style="margin-bottom: 12px;">
+								<label for="profileLocation">Location</label>
+								<input
+									type="text"
+									id="profileLocation"
+									name="address"
+									value={address}
+								/>
+							</div>
+
+							<div class="form-group" style="margin-bottom: 12px;">
+								<label for="profileBio">
+									Bio
+									<span class="char-counter" id="bioCounter">(0 / 250)</span>
+								</label>
+								<textarea id="profileBio" name="bio" maxlength="250" placeholder="Tell us about yourself...">{bio}</textarea>
+							</div>
+
+							<div style="display: grid; grid-template-columns: 1fr auto; gap: 10px; margin-top: 15px;">
+								<button type="submit" class="btn-submit" style="margin: 0;">Save Profile</button>
+								<button type="button" id="clearProfileBtn" class="btn-clear-profile" title="Wipe form fields" style="margin: 0; padding: 0 15px;">Wipe</button>
+							</div>
+						</form>
+					</div>
+				</div>
+			</dialog>
 
 			<!-- RIGHT WORKSPACE: INTERACTIVE WORKSPACE NOTEPAD -->
 			<div class="glass-card">
@@ -1490,6 +1935,51 @@ const noteStatistics = userNotes.reduce(
 				<div class="dashboard-stat-card"><strong data-note-stat="work">{noteStatistics.work}</strong><span>Work</span></div>
 				<div class="dashboard-stat-card"><strong data-note-stat="personal">{noteStatistics.personal}</strong><span>Personal</span></div>
 				<div class="dashboard-stat-card"><strong data-note-stat="ideas">{noteStatistics.ideas}</strong><span>Ideas</span></div>
+			</div>
+
+			<div class="dashboard-productivity">
+				<section class="dashboard-utility-card" aria-labelledby="miniCalendarHeading">
+					<div class="dashboard-utility-header">
+						<h3 id="miniCalendarHeading">Mini Calendar</h3>
+						<a href="/calendar">Full Calendar</a>
+					</div>
+					<div class="mini-calendar-grid" aria-label={`${miniCalendarMonth.toLocaleString("en", { month: "long", year: "numeric" })} mini calendar`}>
+						{["S", "M", "T", "W", "T", "F", "S"].map((weekday) => (
+							<span class="mini-calendar-weekday" aria-hidden="true">{weekday}</span>
+						))}
+						{miniCalendarDates.map((day) => (
+							<a
+								href={`/calendar?date=${day.dateKey}`}
+								class:list={["mini-calendar-day", { "outside-month": !day.inMonth, today: day.isToday, "has-reminders": day.hasReminder }]}
+								aria-label={`${day.date.toLocaleDateString("en", { month: "long", day: "numeric", year: "numeric" })}${day.hasReminder ? ", has reminders" : ""}`}
+							>
+								{day.date.getDate()}
+							</a>
+						))}
+					</div>
+				</section>
+
+				<section class="dashboard-utility-card" aria-labelledby="upcomingRemindersHeading">
+					<div class="dashboard-utility-header">
+						<h3 id="upcomingRemindersHeading">Upcoming Reminders</h3>
+						<a href="/reminders">View all</a>
+					</div>
+					{upcomingReminders.length > 0 ? (
+						<ul class="upcoming-reminder-list">
+							{upcomingReminders.map((reminder) => (
+								<li class="upcoming-reminder-item">
+									<div>
+										<strong>{reminder.title}</strong>
+										<time datetime={`${reminder.date}T${reminder.time}`}>{new Date(`${reminder.date}T${reminder.time}:00`).toLocaleString()}</time>
+									</div>
+									<a class="upcoming-reminder-link" href={`/reminders?id=${reminder.id}`}>Open</a>
+								</li>
+							))}
+						</ul>
+					) : (
+						<p class="upcoming-reminder-empty">No upcoming reminders. Add one to get started.</p>
+					)}
+				</section>
 			</div>
 				
 			<!-- Live Workspace Filter Query Bar -->
@@ -1507,6 +1997,7 @@ const noteStatistics = userNotes.reduce(
 					<button type="button" class="tab-btn" data-filter="Personal">🏠 Personal</button>
 					<button type="button" class="tab-btn" data-filter="Ideas">💡 Ideas</button>
 					<button type="button" class="tab-btn" data-filter="favorites">⭐ Favorites</button>
+					<button type="button" class="tab-btn" data-filter="pinned">📌 Pinned</button>
 				</div>
 
 					<!-- Overwrite your open tag to match this exactly: -->
@@ -1548,7 +2039,7 @@ const noteStatistics = userNotes.reduce(
 					<button type="submit" class="btn-add-note">Add Note</button>
 				</form>
 
-			<div class="notes-grid">
+			<div class="notes-grid" id="notes">
 	{userNotes.length === 0 ? (
 		<div style="grid-column: 1 / -1; text-align:center; color:rgba(255,255,255,0.4); padding: 60px 20px;">
 			<span>📋</span><p>Your workspace is empty.</p>
@@ -1838,6 +2329,7 @@ const noteStatistics = userNotes.reduce(
 	// 2. VARIABLE DECLARATIONS & SELECTORS NEXT
 	// ==========================================
 	const profileForm = document.getElementById("profileForm") as HTMLFormElement | null;
+	const profileDialog = document.getElementById("profileSettingsDialog") as HTMLDialogElement | null;
 	const addNoteForm = document.getElementById("addNoteForm") as HTMLFormElement | null;
 	const workspaceSearch = document.getElementById("workspaceSearch") as HTMLInputElement | null;
 	const clearSearchBtn = document.getElementById("clearSearchBtn") as HTMLButtonElement | null;
@@ -1862,8 +2354,15 @@ const noteStatistics = userNotes.reduce(
 	const bioCounter = document.getElementById("bioCounter");
 	const clearProfileBtn = document.getElementById("clearProfileBtn");
 
+	document.getElementById("openProfileDialog")?.addEventListener("click", () => {
+		profileDialog?.showModal();
+	});
+
 	// Active Category state caching parameter tracker
-	let activeCategoryFilter = "all";
+	const requestedNoteFilter = new URLSearchParams(window.location.search).get("filter");
+	let activeCategoryFilter = requestedNoteFilter === "favorites" || requestedNoteFilter === "pinned"
+		? requestedNoteFilter
+		: "all";
 
 	function sortNoteCards() {
 		if (!notesGrid) return;
@@ -2097,7 +2596,11 @@ const noteStatistics = userNotes.reduce(
 
 			const matchesSearch = titleText.includes(searchQuery) || contentText.includes(searchQuery);
 			const matchesTab = activeCategoryFilter === "all"
-				|| (activeCategoryFilter === "favorites" ? (card as HTMLElement).dataset.favorite === "true" : cardCategory === activeCategoryFilter);
+				|| (activeCategoryFilter === "favorites"
+					? (card as HTMLElement).dataset.favorite === "true"
+					: activeCategoryFilter === "pinned"
+						? (card as HTMLElement).dataset.pinned === "true"
+						: cardCategory === activeCategoryFilter);
 
 			if (matchesSearch && matchesTab) {
 				card.classList.remove("filtered-out");
@@ -2132,6 +2635,12 @@ const noteStatistics = userNotes.reduce(
 			updateWorkspaceVisibility();
 		});
 	});
+
+	if (activeCategoryFilter !== "all") {
+		document.querySelectorAll(".tab-btn").forEach((btn) => btn.classList.remove("active"));
+		document.querySelector(`.tab-btn[data-filter="${activeCategoryFilter}"]`)?.classList.add("active");
+	}
+	updateWorkspaceVisibility();
 
 	// Re-route Search Field inputs to call the unified visibility controller
 	workspaceSearch?.addEventListener("input", () => {
@@ -2453,6 +2962,7 @@ const enteredName = formData.get("displayName")?.toString().trim();
 const h1Header = document.querySelector(".profile-card h1");
 if (h1Header && enteredName) h1Header.textContent = enteredName;
 showNotificationToast("✨ Profile details saved flawlessly!");
+profileDialog?.close();
 } else {
 showNotificationToast("❌ " + (data.message || "Failed to update profile settings."), true);
 }
@@ -3044,6 +3554,81 @@ function attachShareListener(btn: Element | null) {
 }
 
 document.querySelectorAll(".btn-share-note").forEach((btn) => attachShareListener(btn));
+
+const themePreferenceSelect = document.getElementById("themePreference") as HTMLSelectElement | null;
+const darkModeToggle = document.getElementById("darkModeToggle") as HTMLInputElement | null;
+const colorSchemeQuery = window.matchMedia("(prefers-color-scheme: dark)");
+const themeStorageKey = "notepad-theme-preference";
+
+function applyThemePreference(preference: string, persist: boolean = false) {
+	if (preference !== "light" && preference !== "dark" && preference !== "system") return;
+
+	const theme = preference === "system" ? (colorSchemeQuery.matches ? "dark" : "light") : preference;
+	document.documentElement.dataset.themePreference = preference;
+	document.documentElement.dataset.theme = theme;
+	if (themePreferenceSelect) themePreferenceSelect.value = preference;
+	if (darkModeToggle) darkModeToggle.checked = theme === "dark";
+
+	if (persist) {
+		try {
+			localStorage.setItem(themeStorageKey, preference);
+		} catch (error) {
+			console.error("Unable to save the theme preference.", error);
+			showNotificationToast("❌ Theme changed, but the preference could not be saved.", true);
+		}
+	}
+}
+
+applyThemePreference(document.documentElement.dataset.themePreference || "system");
+
+themePreferenceSelect?.addEventListener("change", () => {
+	applyThemePreference(themePreferenceSelect.value, true);
+});
+
+darkModeToggle?.addEventListener("change", () => {
+	applyThemePreference(darkModeToggle.checked ? "dark" : "light", true);
+});
+
+colorSchemeQuery.addEventListener("change", () => {
+	if (document.documentElement.dataset.themePreference === "system") {
+		applyThemePreference("system");
+	}
+});
+
+type ReminderNotification = { id: number | string; title: string; date: string; time: string };
+const notifiedReminderIds = new Set<string>();
+let lastReminderCheck = Date.now() - 30000;
+
+async function checkDueReminders() {
+	try {
+		const response = await fetch("/reminders-api?mode=monitor");
+		const data = await response.json();
+		if (!response.ok || !data.success || !Array.isArray(data.reminders)) {
+			throw new Error(data.message || "Unable to check due reminders.");
+		}
+
+		const checkedAt = Date.now();
+		for (const reminder of data.reminders as ReminderNotification[]) {
+			const reminderId = String(reminder.id);
+			const dueAt = new Date(`${reminder.date}T${reminder.time}:00`).getTime();
+			if (dueAt > checkedAt || dueAt < lastReminderCheck || notifiedReminderIds.has(reminderId)) continue;
+
+			notifiedReminderIds.add(reminderId);
+			const message = `Reminder due: ${reminder.title}`;
+			showNotificationToast(message);
+			if ("Notification" in window && Notification.permission === "granted") {
+				const notification = new Notification("Reminder due", { body: reminder.title });
+				notification.onclick = () => window.focus();
+			}
+		}
+		lastReminderCheck = checkedAt;
+	} catch (error) {
+		console.error("Unable to check due reminders.", error);
+	}
+}
+
+void checkDueReminders();
+window.setInterval(() => void checkDueReminders(), 30000);
 
 </script>
 </body>
