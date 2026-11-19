@@ -1,6 +1,7 @@
 ---
 import { pool } from '../lib/db';
 import WorkspaceNavigation from '../components/WorkspaceNavigation.astro';
+import ProfileSettingsDialog from '../components/ProfileSettingsDialog.astro';
 
 export const prerender = false;
 
@@ -18,12 +19,14 @@ if (sessionCookie?.value.trim()) {
 if (!sessionData?.username) return Astro.redirect('/');
 
 const [userRows]: any = await pool.execute(
-	'SELECT display_name, avatar_url FROM users WHERE BINARY username = ?',
+	'SELECT display_name, avatar_url, address, bio FROM users WHERE BINARY username = ?',
 	[sessionData.username]
 );
 if (userRows.length !== 1) return Astro.redirect('/');
 const displayName = userRows[0].display_name || sessionData.username;
 const avatarUrl = userRows[0].avatar_url || "/default-avatar.png";
+const address = userRows[0].address || "";
+const bio = userRows[0].bio || "";
 ---
 
 <!doctype html>
@@ -98,23 +101,44 @@ const avatarUrl = userRows[0].avatar_url || "/default-avatar.png";
 				object-fit: cover;
 			}
 
+			.profile-card > .avatar-preview {
+				width: 100px;
+				height: 100px;
+				transition: transform 0.2s ease, border-color 0.2s ease;
+			}
+
+			.profile-card > .avatar-preview:hover {
+				transform: scale(1.05);
+				border-color: #fff;
+			}
+
 			.profile-card h1 {
-				margin: 10px 0 3px;
-				font-size: 20px;
+				margin: 10px 0 2px;
+				font-size: 22px;
 				overflow-wrap: anywhere;
 			}
 
 			.profile-card > p {
-				margin: 0;
+				margin: 0 0 15px;
 				color: var(--page-muted);
 				font-size: 12px;
 			}
 
-			.profile-edit-link {
+			.btn-edit-profile {
 				display: inline-block;
-				margin-top: 12px;
-				color: #e2d5ff;
+				width: auto;
+				margin: -6px 0 12px;
+				padding: 7px 12px;
+				border: 1px solid rgba(255, 255, 255, 0.25);
+				border-radius: 20px;
+				background: rgba(255, 255, 255, 0.12);
+				color: #fff;
 				font-size: 11px;
+				cursor: pointer;
+			}
+
+			.btn-edit-profile:hover {
+				background: rgba(255, 255, 255, 0.22);
 			}
 
 			.calendar-header {
@@ -232,21 +256,21 @@ const avatarUrl = userRows[0].avatar_url || "/default-avatar.png";
 
 			.calendar-event-dots {
 				display: flex;
+				align-self: center;
 				gap: 4px;
 				margin-top: auto;
 			}
 
 			.calendar-event-dot {
+				flex: 0 0 auto;
 				width: 6px;
 				height: 6px;
 				border-radius: 50%;
-				background: #d7c5ff;
+				background: #fbbf24;
 			}
 
-			.calendar-day-count {
-				margin-top: 5px;
-				color: var(--page-muted);
-				font-size: 9px;
+			.calendar-event-dot.is-completed {
+				background: #34d399;
 			}
 
 			.selected-day-panel {
@@ -279,7 +303,7 @@ const avatarUrl = userRows[0].avatar_url || "/default-avatar.png";
 
 			.selected-reminder {
 				display: flex;
-				align-items: center;
+				align-items: flex-start;
 				justify-content: space-between;
 				gap: 12px;
 				padding: 10px 12px;
@@ -288,10 +312,18 @@ const avatarUrl = userRows[0].avatar_url || "/default-avatar.png";
 				background: var(--page-surface);
 			}
 
+			.selected-reminder-main {
+				min-width: 0;
+			}
+
 			.selected-reminder strong,
 			.selected-reminder time {
 				display: block;
 				font-size: 12px;
+			}
+
+			.selected-reminder strong {
+				overflow-wrap: anywhere;
 			}
 
 			.selected-reminder time,
@@ -301,9 +333,47 @@ const avatarUrl = userRows[0].avatar_url || "/default-avatar.png";
 				font-size: 11px;
 			}
 
-			.selected-reminder a {
-				color: #e2d5ff;
+			.selected-reminder-status {
+				display: inline-block;
+				margin-top: 8px;
+				padding: 3px 8px;
+				border-radius: 999px;
 				font-size: 11px;
+			}
+
+			.selected-reminder-status.is-pending {
+				background: rgba(251, 191, 36, 0.16);
+				color: #fde68a;
+			}
+
+			.selected-reminder-status.is-completed {
+				background: rgba(52, 211, 153, 0.16);
+				color: #a7f3d0;
+			}
+
+			.selected-reminder-actions {
+				display: flex;
+				flex: 0 0 auto;
+				gap: 8px;
+			}
+
+			.selected-reminder-actions button {
+				width: auto;
+				padding: 7px 10px;
+				font-size: 11px;
+			}
+
+			.selected-reminder-actions .delete-reminder {
+				border-color: rgba(255, 170, 170, 0.4);
+				background: rgba(255, 118, 117, 0.18);
+			}
+
+			:root[data-theme="dark"] .selected-reminder-status.is-pending {
+				color: #fde68a;
+			}
+
+			:root[data-theme="dark"] .selected-reminder-status.is-completed {
+				color: #a7f3d0;
 			}
 
 			.reminder-form {
@@ -368,8 +438,7 @@ const avatarUrl = userRows[0].avatar_url || "/default-avatar.png";
 
 			.calendar-status.error { color: #ffb4b4; }
 
-			:root[data-theme="dark"] .profile-edit-link,
-			:root[data-theme="dark"] .selected-reminder a {
+			:root[data-theme="dark"] .profile-edit-link {
 				color: #c4b5fd;
 			}
 
@@ -388,7 +457,7 @@ const avatarUrl = userRows[0].avatar_url || "/default-avatar.png";
 				body { padding: 14px; }
 				.workspace-layout { grid-template-columns: 1fr; gap: 14px; }
 				.profile-card { position: static; }
-				.profile-card > .avatar { width: 70px; height: 70px; }
+				.profile-card > .avatar-preview { width: 100px; height: 100px; }
 			}
 
 			@media (max-width: 600px) {
@@ -396,13 +465,13 @@ const avatarUrl = userRows[0].avatar_url || "/default-avatar.png";
 				.calendar-header { align-items: flex-start; flex-direction: column; }
 				.calendar-day { min-height: 62px; padding: 7px; border-radius: 10px; }
 				.calendar-grid { gap: 4px; }
-				.calendar-day-count { display: none; }
 				.calendar-title p { font-size: 11px; }
 				.calendar-month-controls { width: 100%; justify-content: space-between; }
 				.calendar-month-controls strong { min-width: 0; }
 				.reminder-form { grid-template-columns: 1fr; }
 				.reminder-form .wide { grid-column: auto; }
 				.selected-day-header { align-items: flex-start; flex-direction: column; }
+				.selected-reminder { flex-direction: column; }
 			}
 		</style>
 		<script is:inline>
@@ -424,10 +493,10 @@ const avatarUrl = userRows[0].avatar_url || "/default-avatar.png";
 	<body>
 		<div class="workspace-layout">
 			<aside class="glass-card profile-card">
-				<img class="avatar" src={avatarUrl} alt="Profile" />
-				<h1>{displayName}</h1>
+				<img class="avatar avatar-preview" src={avatarUrl} alt="Avatar" data-profile-avatar />
+				<h1 data-profile-display-name data-fallback-name={sessionData.username}>{displayName}</h1>
 				<p>Profile Station</p>
-				<a class="profile-edit-link" href="/dashboard#profileForm">Edit profile</a>
+				<button type="button" class="btn-edit-profile" data-open-profile-dialog aria-haspopup="dialog" aria-controls="profileSettingsDialog">Edit Profile</button>
 				<WorkspaceNavigation currentPage="calendar" />
 			</aside>
 
@@ -489,6 +558,14 @@ const avatarUrl = userRows[0].avatar_url || "/default-avatar.png";
 			</main>
 		</div>
 
+		<ProfileSettingsDialog
+			displayName={userRows[0].display_name || ""}
+			fallbackDisplayName={sessionData.username}
+			address={address}
+			bio={bio}
+			avatarUrl={avatarUrl}
+		/>
+
 		<script>
 			type Reminder = {
 				id: number | string;
@@ -506,6 +583,8 @@ const avatarUrl = userRows[0].avatar_url || "/default-avatar.png";
 			const emptyDayMessage = document.getElementById("emptyDayMessage")!;
 			const calendarForm = document.getElementById("calendarReminderForm") as HTMLFormElement;
 			const calendarStatus = document.getElementById("calendarStatus")!;
+			const reminderTitleInput = document.getElementById("calendarReminderTitle") as HTMLInputElement;
+			const reminderDescriptionInput = document.getElementById("calendarReminderDescription") as HTMLTextAreaElement;
 			const reminderDateInput = document.getElementById("calendarReminderDate") as HTMLInputElement;
 			const reminderTimeInput = document.getElementById("calendarReminderTime") as HTMLInputElement;
 			const colorSchemeQuery = window.matchMedia("(prefers-color-scheme: dark)");
@@ -514,6 +593,8 @@ const avatarUrl = userRows[0].avatar_url || "/default-avatar.png";
 			let selectedDate = new Date();
 			let reminders: Reminder[] = [];
 			let calendarRequestId = 0;
+			let editingReminderId: string | null = null;
+			let editingReminderCompleted = false;
 
 			function dateKey(date: Date) {
 				return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
@@ -529,6 +610,14 @@ const avatarUrl = userRows[0].avatar_url || "/default-avatar.png";
 			function setStatus(message: string, isError = false) {
 				calendarStatus.textContent = message;
 				calendarStatus.classList.toggle("error", isError);
+			}
+
+			function closeReminderForm() {
+				calendarForm.reset();
+				calendarForm.hidden = true;
+				editingReminderId = null;
+				editingReminderCompleted = false;
+				calendarForm.querySelector<HTMLButtonElement>('button[type="submit"]')!.textContent = "Save reminder";
 			}
 
 			function remindersFor(date: Date) {
@@ -549,16 +638,100 @@ const avatarUrl = userRows[0].avatar_url || "/default-avatar.png";
 					const item = document.createElement("li");
 					item.className = "selected-reminder";
 					const content = document.createElement("div");
+					content.className = "selected-reminder-main";
 					const title = document.createElement("strong");
 					title.textContent = reminder.title;
 					const time = document.createElement("time");
-					time.textContent = `${reminder.time}${Number(reminder.completed) ? " · Completed" : ""}`;
+					time.dateTime = `${reminder.date}T${reminder.time}`;
+					time.textContent = new Date(`${reminder.date}T${reminder.time}:00`).toLocaleTimeString(undefined, {
+						hour: "numeric", minute: "2-digit"
+					});
+					const completed = Boolean(Number(reminder.completed));
+					const status = document.createElement("span");
+					status.className = `selected-reminder-status ${completed ? "is-completed" : "is-pending"}`;
+					status.textContent = completed ? "Completed" : "Not completed";
 					content.append(title, time);
-					const link = document.createElement("a");
-					link.href = `/reminders?id=${encodeURIComponent(String(reminder.id))}`;
-					link.textContent = "Manage";
-					item.append(content, link);
+					content.append(status);
+
+					const actions = document.createElement("div");
+					actions.className = "selected-reminder-actions";
+					const completionButton = document.createElement("button");
+					completionButton.type = "button";
+					completionButton.textContent = completed ? "Restore" : "Complete";
+					completionButton.addEventListener("click", () => {
+						void setReminderCompleted(reminder, !completed, completionButton);
+					});
+					const editButton = document.createElement("button");
+					editButton.type = "button";
+					editButton.textContent = "Edit";
+					editButton.addEventListener("click", () => beginEditReminder(reminder));
+					const deleteButton = document.createElement("button");
+					deleteButton.type = "button";
+					deleteButton.className = "delete-reminder";
+					deleteButton.textContent = "Delete";
+					deleteButton.addEventListener("click", () => void deleteReminder(reminder, deleteButton));
+					actions.append(completionButton, editButton, deleteButton);
+					item.append(content, actions);
 					reminderList.append(item);
+				}
+			}
+
+			function beginEditReminder(reminder: Reminder) {
+				editingReminderId = String(reminder.id);
+				editingReminderCompleted = Boolean(Number(reminder.completed));
+				reminderTitleInput.value = reminder.title;
+				reminderDescriptionInput.value = reminder.description || "";
+				reminderDateInput.value = reminder.date;
+				reminderTimeInput.value = reminder.time;
+				calendarForm.hidden = false;
+				calendarForm.querySelector<HTMLButtonElement>('button[type="submit"]')!.textContent = "Save changes";
+				setStatus("");
+				reminderTitleInput.focus();
+			}
+
+			async function deleteReminder(reminder: Reminder, button: HTMLButtonElement) {
+				if (!window.confirm(`Delete "${reminder.title}"?`)) return;
+				button.disabled = true;
+				try {
+					const response = await fetch(`/reminders-api?id=${encodeURIComponent(String(reminder.id))}`, {
+						method: "DELETE"
+					});
+					const data = await response.json();
+					if (!response.ok || !data.success) throw new Error(data.message || "Unable to delete reminder.");
+					if (editingReminderId === String(reminder.id)) closeReminderForm();
+					setStatus("Reminder deleted.");
+					await loadCalendarReminders();
+				} catch (error) {
+					console.error("Calendar reminder deletion error:", error);
+					setStatus(error instanceof Error ? error.message : "Unable to delete reminder.", true);
+				} finally {
+					button.disabled = false;
+				}
+			}
+
+			async function setReminderCompleted(
+				reminder: Reminder,
+				completed: boolean,
+				button: HTMLButtonElement
+			) {
+				button.disabled = true;
+				try {
+					const response = await fetch(`/reminders-api?id=${encodeURIComponent(String(reminder.id))}`, {
+						method: "PUT",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({ completed })
+					});
+					const data = await response.json();
+					if (!response.ok || !data.success) {
+						throw new Error(data.message || "Unable to update reminder.");
+					}
+					setStatus(completed ? "Reminder completed." : "Reminder restored.");
+					await loadCalendarReminders();
+				} catch (error) {
+					console.error("Calendar reminder completion update error:", error);
+					setStatus(error instanceof Error ? error.message : "Unable to update reminder.", true);
+				} finally {
+					button.disabled = false;
 				}
 			}
 
@@ -592,16 +765,13 @@ const avatarUrl = userRows[0].avatar_url || "/default-avatar.png";
 						const dots = document.createElement("span");
 						dots.className = "calendar-event-dots";
 						dots.setAttribute("aria-hidden", "true");
-						for (let dot = 0; dot < Math.min(dayReminders.length, 4); dot += 1) {
+						for (const reminder of dayReminders.slice(0, 4)) {
 							const indicator = document.createElement("span");
 							indicator.className = "calendar-event-dot";
+							if (Boolean(Number(reminder.completed))) indicator.classList.add("is-completed");
 							dots.append(indicator);
 						}
 						button.append(dots);
-						const count = document.createElement("span");
-						count.className = "calendar-day-count";
-						count.textContent = `${dayReminders.length} reminder${dayReminders.length === 1 ? "" : "s"}`;
-						button.append(count);
 					}
 					button.addEventListener("click", () => {
 						selectedDate = date;
@@ -650,43 +820,57 @@ const avatarUrl = userRows[0].avatar_url || "/default-avatar.png";
 				visibleMonth = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
 				void loadCalendarReminders();
 			});
+			document.addEventListener("visibilitychange", () => {
+				if (document.visibilityState === "visible") void loadCalendarReminders();
+			});
+			window.addEventListener("focus", () => void loadCalendarReminders());
+			window.setInterval(() => {
+				if (document.visibilityState === "visible") void loadCalendarReminders();
+			}, 60000);
 
 			document.getElementById("addCalendarReminder")?.addEventListener("click", () => {
+				closeReminderForm();
 				calendarForm.hidden = false;
 				reminderDateInput.value = dateKey(selectedDate);
 				reminderTimeInput.value = "09:00";
-				(document.getElementById("calendarReminderTitle") as HTMLInputElement).focus();
+				setStatus("");
+				reminderTitleInput.focus();
 			});
 			document.getElementById("cancelCalendarReminder")?.addEventListener("click", () => {
-				calendarForm.reset();
-				calendarForm.hidden = true;
+				closeReminderForm();
 				setStatus("");
 			});
 			calendarForm.addEventListener("submit", async (event) => {
 				event.preventDefault();
 				const formData = new FormData(calendarForm);
 				const submitButton = calendarForm.querySelector<HTMLButtonElement>('button[type="submit"]');
+				const reminderId = editingReminderId;
+				const payload = {
+					title: formData.get("title"),
+					description: formData.get("description"),
+					date: formData.get("date"),
+					time: formData.get("time"),
+					...(reminderId ? { completed: editingReminderCompleted } : {})
+				};
 				if (submitButton) submitButton.disabled = true;
 				try {
-					const response = await fetch("/reminders-api", {
-						method: "POST",
-						headers: { "Content-Type": "application/json" },
-						body: JSON.stringify({
-							title: formData.get("title"),
-							description: formData.get("description"),
-							date: formData.get("date"),
-							time: formData.get("time")
-						})
-					});
+					const response = await fetch(
+						reminderId ? `/reminders-api?id=${encodeURIComponent(reminderId)}` : "/reminders-api",
+						{
+							method: reminderId ? "PUT" : "POST",
+							headers: { "Content-Type": "application/json" },
+							body: JSON.stringify(payload)
+						}
+					);
 					const data = await response.json();
 					if (!response.ok || !data.success) throw new Error(data.message || "Unable to save reminder.");
 					selectedDate = parseDateKey(String(formData.get("date"))) || selectedDate;
-					calendarForm.reset();
-					calendarForm.hidden = true;
-					setStatus("Reminder saved.");
+					visibleMonth = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
+					closeReminderForm();
+					setStatus(reminderId ? "Reminder updated." : "Reminder saved.");
 					await loadCalendarReminders();
 				} catch (error) {
-					console.error("Calendar reminder creation error:", error);
+					console.error("Calendar reminder save error:", error);
 					setStatus(error instanceof Error ? error.message : "Unable to save reminder.", true);
 				} finally {
 					if (submitButton) submitButton.disabled = false;

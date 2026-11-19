@@ -267,6 +267,7 @@ export const PUT: APIRoute = async ({ request, url, cookies }) => {
       `SELECT n.id
        FROM notes n
        WHERE n.id = ?
+         AND n.deleted_at IS NULL
          AND (
            n.user_id = ?
            OR EXISTS (
@@ -284,7 +285,7 @@ export const PUT: APIRoute = async ({ request, url, cookies }) => {
     }
 
     await pool.execute(
-      'UPDATE notes SET title = ?, content = ?, category = ? WHERE id = ?',
+      'UPDATE notes SET title = ?, content = ?, category = ? WHERE id = ? AND deleted_at IS NULL',
       [cleanTitle, cleanContent, cleanCategory, noteId]
     );
     return new Response(JSON.stringify({
@@ -299,7 +300,7 @@ export const PUT: APIRoute = async ({ request, url, cookies }) => {
   }
 };
 
-// 2. DELETE HANDLER - Safely Remove Personal Notes
+// 2. DELETE HANDLER - Move owned notes to Trash
 export const DELETE: APIRoute = async ({ url, cookies }) => {
   try {
     const userId = await getUserIdFromSession(cookies);
@@ -308,63 +309,44 @@ export const DELETE: APIRoute = async ({ url, cookies }) => {
     }
 
     const noteId = url.searchParams.get("id");
-    if (!noteId) {
-      return new Response(JSON.stringify({ success: false, message: "Missing resource routing identifier." }), { status: 400 });
+    if (!noteId || !/^[1-9]\d{0,19}$/.test(noteId)) {
+      return new Response(JSON.stringify({ success: false, message: "A valid note identifier is required." }), { status: 400 });
     }
 
-    const [attachmentRows]: any = await pool.execute(
-      `SELECT a.stored_filename
-       FROM note_attachments a
-       JOIN notes n ON n.id = a.note_id
-       WHERE n.id = ?
-         AND a.stored_filename IS NOT NULL
-         AND (
-           n.user_id = ?
-           OR EXISTS (
-             SELECT 1 FROM note_shares
-             WHERE note_shares.note_id = n.id
-               AND note_shares.shared_with_user_id = ?
-               AND note_shares.permission_level = 'edit'
-           )
-         )`,
-      [noteId, userId, userId]
-    );
-
-    // Owners and users with explicit edit permission may delete the shared note.
-    const [result]: any = await pool.execute(
-      `DELETE FROM notes
-       WHERE id = ?
-         AND (
-           user_id = ?
-           OR EXISTS (
-             SELECT 1 FROM note_shares
-             WHERE note_shares.note_id = notes.id
-               AND note_shares.shared_with_user_id = ?
-               AND note_shares.permission_level = 'edit'
-           )
-         )`,
-      [noteId, userId, userId]
-    );
-    if (result.affectedRows !== 1) {
-      return new Response(JSON.stringify({ success: false, message: "You do not have permission to delete this note." }), { status: 403 });
-    }
-    let cleanupFailed = false;
-    for (const attachment of attachmentRows) {
-      try {
-        await fs.unlink(path.join(attachmentDirectory, attachment.stored_filename));
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
-          cleanupFailed = true;
-          console.error("Failed to remove a deleted note attachment:", error);
-        }
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      const [result]: any = await connection.execute(
+        `UPDATE notes
+         SET deleted_at = NOW()
+         WHERE id = ? AND user_id = ? AND deleted_at IS NULL`,
+        [noteId, userId]
+      );
+      if (result.affectedRows !== 1) {
+        await connection.rollback();
+        return new Response(JSON.stringify({ success: false, message: "You do not have permission to move this note to Trash." }), { status: 403 });
       }
+      await connection.execute(
+        'UPDATE note_preferences SET is_pinned = 0 WHERE note_id = ?',
+        [noteId]
+      );
+      await connection.commit();
+      return new Response(JSON.stringify({ success: true }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' }
+      });
+    } catch (error) {
+      try {
+        await connection.rollback();
+      } catch (rollbackError) {
+        console.error("Note trash transaction rollback error:", rollbackError);
+      }
+      throw error;
+    } finally {
+      connection.release();
     }
-    return new Response(JSON.stringify({
-      success: true,
-      ...(cleanupFailed ? { warning: "The note was deleted, but one or more attachment files could not be removed." } : {})
-    }), { status: 200 });
   } catch (err) {
-    console.error("Database deletion error track:", err);
-    return new Response(JSON.stringify({ success: false, message: "Database deletion fault." }), { status: 500 });
+    console.error("Database note trash error:", err);
+    return new Response(JSON.stringify({ success: false, message: "Unable to move this note to Trash." }), { status: 500 });
   }
 };

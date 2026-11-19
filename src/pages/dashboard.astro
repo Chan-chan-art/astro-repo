@@ -1,6 +1,7 @@
 ---
 // src/pages/dashboard.astro
 import { pool } from '../lib/db';
+import { purgeExpiredTrashedNotes } from '../lib/note-trash';
 import WorkspaceNavigation from '../components/WorkspaceNavigation.astro';
 export const prerender = false;
 
@@ -21,6 +22,15 @@ if (!sessionData || !sessionData.username) {
 }
 
 const username = sessionData.username;
+const requestedView = Astro.url.searchParams.get("view");
+const requestedNoteFilter = Astro.url.searchParams.get("filter");
+const viewMode = requestedView === "notes" || requestedView === "favorites" || requestedView === "pinned" || requestedView === "trash"
+  ? requestedView
+  : requestedNoteFilter === "favorites" || requestedNoteFilter === "pinned"
+    ? requestedNoteFilter
+    : requestedNoteFilter
+      ? "notes"
+      : "dashboard";
 
 let displayName = "";
 let bio = "";
@@ -43,28 +53,44 @@ try {
     
     userId = userRows[0].id;
 
-    const [noteRows]: any = await pool.execute(
-      `SELECT 
-         n.id, n.title, n.content, n.category, n.user_id as owner_id,
-         DATE_FORMAT(n.created_at, "%b %d, %Y") as date,
-         u.display_name as owner_name,
-         COALESCE(np.is_pinned, 0) as is_pinned,
-         COALESCE(np.is_favorite, 0) as is_favorite,
-         IF(n.user_id = ?, 'owner', ns.permission_level) as user_role,
-         (
-           SELECT GROUP_CONCAT(shared_users.username SEPARATOR ', ')
-           FROM note_shares note_mapping
-           JOIN users shared_users ON note_mapping.shared_with_user_id = shared_users.id
-           WHERE note_mapping.note_id = n.id
-         ) as shared_users_list
-       FROM notes n
-       LEFT JOIN users u ON n.user_id = u.id
-       LEFT JOIN note_shares ns ON n.id = ns.note_id AND ns.shared_with_user_id = ?
-       LEFT JOIN note_preferences np ON np.note_id = n.id AND np.user_id = ?
-       WHERE n.user_id = ? OR ns.shared_with_user_id = ?
-       ORDER BY COALESCE(np.is_pinned, 0) DESC, n.id DESC`,
-      [userId, userId, userId, userId, userId]
-    );
+    if (viewMode === "trash") await purgeExpiredTrashedNotes(Number(userId));
+    const [noteRows]: any = viewMode === "trash"
+      ? await pool.execute(
+        `SELECT n.id, n.title, n.content, n.category, n.user_id AS owner_id,
+                DATE_FORMAT(n.created_at, "%b %d, %Y") AS date,
+                GREATEST(0, CEIL(TIMESTAMPDIFF(SECOND, NOW(), DATE_ADD(n.deleted_at, INTERVAL 30 DAY)) / 86400)) AS days_left,
+                0 AS is_pinned, 0 AS is_favorite, 'owner' AS user_role,
+                NULL AS owner_name, NULL AS shared_users_list
+         FROM notes n
+         WHERE n.user_id = ?
+           AND n.deleted_at IS NOT NULL
+           AND n.deleted_at >= DATE_SUB(NOW(), INTERVAL 30 DAY)
+         ORDER BY n.deleted_at DESC, n.id DESC`,
+        [userId]
+      )
+      : await pool.execute(
+        `SELECT
+           n.id, n.title, n.content, n.category, n.user_id as owner_id,
+           DATE_FORMAT(n.created_at, "%b %d, %Y") as date,
+           u.display_name as owner_name,
+           COALESCE(np.is_pinned, 0) as is_pinned,
+           COALESCE(np.is_favorite, 0) as is_favorite,
+           IF(n.user_id = ?, 'owner', ns.permission_level) as user_role,
+           (
+             SELECT GROUP_CONCAT(shared_users.username SEPARATOR ', ')
+             FROM note_shares note_mapping
+             JOIN users shared_users ON note_mapping.shared_with_user_id = shared_users.id
+             WHERE note_mapping.note_id = n.id
+           ) as shared_users_list
+         FROM notes n
+         LEFT JOIN users u ON n.user_id = u.id
+         LEFT JOIN note_shares ns ON n.id = ns.note_id AND ns.shared_with_user_id = ?
+         LEFT JOIN note_preferences np ON np.note_id = n.id AND np.user_id = ?
+         WHERE n.deleted_at IS NULL
+           AND (n.user_id = ? OR ns.shared_with_user_id = ?)
+         ORDER BY COALESCE(np.is_pinned, 0) DESC, n.id DESC`,
+        [userId, userId, userId, userId, userId]
+      );
 
     if (noteRows.length > 0) {
       const noteIds = noteRows.map((note: any) => note.id);
@@ -110,17 +136,25 @@ const noteStatistics = userNotes.reduce(
   },
   { total: 0, general: 0, work: 0, personal: 0, ideas: 0 }
 );
-
-let upcomingReminders: Array<{ id: number; title: string; description: string; date: string; time: string }> = [];
+let upcomingReminders: Array<{
+  id: number;
+  title: string;
+  description: string;
+  date: string;
+  time: string;
+  noteId: number | string | null;
+  noteTitle: string | null;
+}> = [];
 if (userId) {
   try {
     const [reminderRows]: any = await pool.execute(
-      `SELECT id, title, description,
-              DATE_FORMAT(scheduled_at, '%Y-%m-%d') AS date,
-              TIME_FORMAT(scheduled_at, '%H:%i') AS time
-       FROM reminders
-       WHERE user_id = ? AND is_completed = 0 AND scheduled_at >= NOW()
-       ORDER BY scheduled_at ASC
+      `SELECT r.id, r.title, r.description, r.note_id AS noteId, n.title AS noteTitle,
+              DATE_FORMAT(r.scheduled_at, '%Y-%m-%d') AS date,
+              TIME_FORMAT(r.scheduled_at, '%H:%i') AS time
+       FROM reminders r
+       LEFT JOIN notes n ON n.id = r.note_id AND n.deleted_at IS NULL
+       WHERE r.user_id = ? AND r.is_completed = 0 AND r.scheduled_at >= NOW()
+       ORDER BY r.scheduled_at ASC
        LIMIT 5`,
       [userId]
     );
@@ -189,8 +223,7 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 
 @media (min-width: 768px) {
 	body {
-		padding: 40px; /* Expands to deeper workspace margins on regular desktop displays */
-		align-items: center; /* Re-center layout boxes vertically if content easily fits on wider aspect ratios */
+		padding: 24px;
 	}
 }
 
@@ -198,25 +231,20 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 .dashboard-container {
 	display: grid;
 	grid-template-columns: 1fr; /* Default: Stacks vertically into 1 column on mobile layout blocks */
-	gap: 25px;
-	width: 100%;
-	max-width: 1200px;
+	gap: 24px;
+	width: min(1400px, 100%);
 	margin: 0 auto;
 	box-sizing: border-box;
+	align-items: start;
 }
 
-/* 📱 Responsive break point: On tablets/laptops and wider screen layers, enable split layouts */
-@media (min-width: 992px) {
-	.dashboard-container {
-		grid-template-columns: 1fr 2fr; /* Profile sidebar is compact, workspace notepad gets maximum priority space */
-		gap: 30px;
-		width: 90%;
-	}
+.workspace-content {
+	min-width: 0;
 }
 
-@media (min-width: 1200px) {
+@media (min-width: 901px) {
 	.dashboard-container {
-		width: 85%; /* Keeps content comfortably framed on large widescreen displays */
+		grid-template-columns: minmax(240px, 280px) minmax(0, 1fr);
 	}
 }
 
@@ -248,7 +276,7 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 	top: 20px; /* Sticks the sidebar in place on desktop viewports when scrolling through long feeds of note cards */
 }
 
-@media (max-width: 991px) {
+@media (max-width: 900px) {
 	.profile-card {
 		position: static; /* Disables sticky tracking on mobile devices so it scrolls naturally with the document flow */
 	}
@@ -305,7 +333,7 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 /* 📋 Responsive Add Note Form Wrapper Grid */
 .add-note-form {
 	display: grid;
-	grid-template-columns: minmax(0, 1fr);
+	grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
 	gap: 14px;
 	margin-top: 18px;
 	background: rgba(255, 255, 255, 0.04);
@@ -314,13 +342,6 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 	border-radius: 20px;
 	align-items: end;
 	box-sizing: border-box;
-}
-
-/* Keep the action aligned with the category control on wider screens. */
-@media (min-width: 600px) {
-	.add-note-form {
-		grid-template-columns: repeat(2, minmax(0, 1fr));
-	}
 }
 
 @media (min-width: 900px) {
@@ -492,7 +513,7 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 
 .dashboard-statistics {
 	display: grid;
-	grid-template-columns: repeat(2, minmax(0, 1fr));
+	grid-template-columns: repeat(auto-fit, minmax(min(100%, 110px), 1fr));
 	gap: 10px;
 	margin-top: 16px;
 }
@@ -520,10 +541,60 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 	overflow-wrap: anywhere;
 }
 
-@media (min-width: 600px) {
-	.dashboard-statistics {
-		grid-template-columns: repeat(5, minmax(0, 1fr));
-	}
+.workspace-view-title {
+	margin: 16px 0 0;
+	font-size: 18px;
+}
+
+.trash-toolbar {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	flex-wrap: wrap;
+	gap: 12px;
+	margin-top: 18px;
+	padding: 12px 14px;
+	border: 1px solid var(--dashboard-border);
+	border-radius: 12px;
+	background: var(--dashboard-surface-soft);
+}
+
+.trash-toolbar p {
+	flex: 1 1 220px;
+	margin: 0;
+	color: var(--dashboard-muted);
+	font-size: 12px;
+	line-height: 1.5;
+}
+
+.trash-toolbar button,
+.note-card-actions .btn-delete-forever {
+	flex: 0 0 auto;
+	width: auto;
+	padding: 7px 12px;
+	border: 1px solid rgba(255, 170, 170, 0.4);
+	border-radius: 10px;
+	background: rgba(255, 118, 117, 0.18);
+	color: #fff;
+	font-size: 12px;
+	font-weight: 700;
+}
+
+.trash-toolbar button:disabled,
+.note-card-actions button:disabled {
+	cursor: wait;
+	opacity: 0.65;
+}
+
+.trash-days-left {
+	display: inline-block;
+	margin-top: 10px;
+	padding: 4px 8px;
+	border-radius: 999px;
+	background: rgba(255, 215, 0, 0.16);
+	color: #fff0a6;
+	font-size: 11px;
+	font-weight: 700;
 }
 
 .search-wrapper input {
@@ -573,7 +644,7 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 
 .notes-grid {
 	display: grid;
-	grid-template-columns: repeat(auto-fill, minmax(min(100%, 220px), 1fr));
+	grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
 	gap: 16px;
 	margin-top: 20px;
 }
@@ -1070,6 +1141,17 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 	resize: vertical;
 }
 
+.note-reminder-fields {
+	display: grid;
+	grid-template-columns: repeat(2, minmax(0, 1fr));
+	gap: 12px;
+}
+
+.note-reminder-fields label {
+	display: block;
+	margin: 0 0 6px;
+}
+
 .note-edit-form select option {
 	background: #21143b;
 	color: #fff;
@@ -1083,13 +1165,14 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 
 /* 🏷️ Small Tag Badge indicator on top of cards */
 .note-tag-badge {
-	display: inline-block;
+	display: inline-flex;
 	font-size: 10px;
 	font-weight: bold;
 	background: rgba(255, 255, 255, 0.15);
 	padding: 3px 8px;
 	border-radius: 10px;
 	margin-bottom: 8px;
+	margin-left: 8px;
 	text-transform: uppercase;
 	letter-spacing: 0.5px;
 	color: rgba(255, 255, 255, 0.8);
@@ -1492,45 +1575,17 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 /* Dashboard theme preferences */
 .settings-panel {
 	margin-top: 20px;
-	padding: 16px;
-	border: 1px solid var(--dashboard-border);
-	border-radius: 16px;
-	background: var(--dashboard-surface-soft);
+	padding: 14px 0 0;
+	border: 0;
+	border-top: 1px solid var(--dashboard-border);
+	border-radius: 0;
+	background: transparent;
 	text-align: left;
 }
 
 .settings-panel h2 {
-	margin: 0 0 4px;
-	font-size: 15px;
-}
-
-.settings-panel p {
-	margin: 0 0 12px;
-	color: var(--dashboard-muted);
-	font-size: 11px;
-	line-height: 1.5;
-}
-
-.settings-panel > label {
-	margin: 0 0 6px;
-	color: var(--dashboard-muted);
-	font-size: 11px;
-}
-
-.settings-panel select {
-	width: 100%;
-	padding: 10px 12px;
-	border: 1px solid var(--dashboard-border);
-	border-radius: 10px;
-	background: var(--dashboard-input-background);
-	color: var(--dashboard-input-text);
-	font: inherit;
+	margin: 0 0 8px;
 	font-size: 13px;
-}
-
-.settings-panel select option {
-	background: #3a118c;
-	color: #fff;
 }
 
 .theme-toggle-row {
@@ -1538,9 +1593,10 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 	align-items: center;
 	justify-content: space-between;
 	gap: 12px;
-	margin-top: 14px;
+	margin-top: 0;
+	padding: 7px 2px 12px;
 	color: var(--dashboard-text);
-	font-size: 13px;
+	font-size: 12px;
 	cursor: pointer;
 }
 
@@ -1574,8 +1630,7 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 :root[data-theme="dark"] .dashboard-stat-card,
 :root[data-theme="dark"] .note-skeleton,
 :root[data-theme="dark"] .comment-bubble,
-:root[data-theme="dark"] .chat-composer-field,
-:root[data-theme="dark"] .settings-panel {
+:root[data-theme="dark"] .chat-composer-field {
 	background-color: var(--dashboard-surface-soft);
 	border-color: var(--dashboard-border);
 }
@@ -1587,8 +1642,7 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 :root[data-theme="dark"] .note-edit-form input,
 :root[data-theme="dark"] .note-edit-form textarea,
 :root[data-theme="dark"] .note-edit-form select,
-:root[data-theme="dark"] .note-share-form input,
-:root[data-theme="dark"] .settings-panel select {
+:root[data-theme="dark"] .note-share-form input {
 	background-color: var(--dashboard-input-background);
 	border-color: var(--dashboard-border);
 	color: var(--dashboard-input-text);
@@ -1600,8 +1654,7 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 }
 
 :root[data-theme="dark"] .select-category option,
-:root[data-theme="dark"] .note-edit-form select option,
-:root[data-theme="dark"] .settings-panel select option {
+:root[data-theme="dark"] .note-edit-form select option {
 	background: #211b36;
 	color: #f5f3ff;
 }
@@ -1664,7 +1717,7 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 
 .dashboard-productivity {
 	display: grid;
-	grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+	grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
 	gap: 14px;
 	margin-top: 18px;
 }
@@ -1790,12 +1843,6 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 	margin: 0;
 }
 
-@media (max-width: 700px) {
-	.dashboard-productivity {
-		grid-template-columns: 1fr;
-	}
-}
-
 :root[data-theme="dark"] .dashboard-utility-card,
 :root[data-theme="dark"] .upcoming-reminder-item {
 	background: var(--dashboard-surface-soft);
@@ -1842,19 +1889,17 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 				<h1 style="font-size:22px; margin: 10px 0 2px 0;">{greetingName}</h1>
 				<p style="font-size:12px; margin-bottom:15px;">Profile Station</p>
 				<button type="button" class="btn-edit-profile" id="openProfileDialog" aria-haspopup="dialog" aria-controls="profileSettingsDialog">Edit Profile</button>
-				<WorkspaceNavigation currentPage="dashboard" showPreferences={false} showLogout={false} />
+				<WorkspaceNavigation
+					currentPage="dashboard"
+					currentSection={viewMode === "dashboard" ? undefined : viewMode}
+					showPreferences={false}
+					showLogout={false}
+				/>
 				
-				<section class="settings-panel" aria-labelledby="dashboardSettingsHeading">
-					<h2 id="dashboardSettingsHeading">Dashboard Settings</h2>
-					<p>Choose how your workspace looks. System follows your device preference.</p>
-					<label for="themePreference">Theme</label>
-					<select id="themePreference" name="themePreference">
-						<option value="light">Light</option>
-						<option value="dark">Dark</option>
-						<option value="system">System</option>
-					</select>
+				<section class="settings-panel" aria-labelledby="dashboardPreferencesHeading">
+					<h2 id="dashboardPreferencesHeading">Preferences</h2>
 					<label class="theme-toggle-row" for="darkModeToggle">
-						<span>Dark mode</span>
+						<span>Dark Mode</span>
 						<input type="checkbox" id="darkModeToggle" />
 					</label>
 				</section>
@@ -1927,8 +1972,12 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 			</dialog>
 
 			<!-- RIGHT WORKSPACE: INTERACTIVE WORKSPACE NOTEPAD -->
-			<div class="glass-card">
+			<div class="glass-card workspace-content" data-view-mode={viewMode}>
 				<h2 style="margin-top:0; border-bottom: 1px solid rgba(255,255,255,0.2); padding-bottom:10px;">📋 Personal Notepad Workspace</h2>
+				<h3 class="workspace-view-title">
+					{viewMode === "notes" ? "My Notes" : viewMode === "favorites" ? "Favorites" : viewMode === "pinned" ? "Pinned Notes" : viewMode === "trash" ? "Trash" : "Dashboard"}
+				</h3>
+			{viewMode !== "trash" && (
 			<div class="dashboard-statistics" aria-label="Dashboard note statistics">
 				<div class="dashboard-stat-card"><strong data-note-stat="total">{noteStatistics.total}</strong><span>Total Notes</span></div>
 				<div class="dashboard-stat-card"><strong data-note-stat="general">{noteStatistics.general}</strong><span>General</span></div>
@@ -1936,7 +1985,9 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 				<div class="dashboard-stat-card"><strong data-note-stat="personal">{noteStatistics.personal}</strong><span>Personal</span></div>
 				<div class="dashboard-stat-card"><strong data-note-stat="ideas">{noteStatistics.ideas}</strong><span>Ideas</span></div>
 			</div>
+			)}
 
+			{viewMode === "dashboard" && (
 			<div class="dashboard-productivity">
 				<section class="dashboard-utility-card" aria-labelledby="miniCalendarHeading">
 					<div class="dashboard-utility-header">
@@ -1971,6 +2022,9 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 									<div>
 										<strong>{reminder.title}</strong>
 										<time datetime={`${reminder.date}T${reminder.time}`}>{new Date(`${reminder.date}T${reminder.time}:00`).toLocaleString()}</time>
+										{reminder.noteId && reminder.noteTitle && (
+											<a class="upcoming-reminder-link" href={`/dashboard?view=notes#note-${reminder.noteId}`}>📝 From: {reminder.noteTitle}</a>
+										)}
 									</div>
 									<a class="upcoming-reminder-link" href={`/reminders?id=${reminder.id}`}>Open</a>
 								</li>
@@ -1981,7 +2035,17 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 					)}
 				</section>
 			</div>
+			)}
 				
+			{viewMode === "trash" && (
+				<div class="trash-toolbar">
+					<p>Notes in Trash are permanently deleted after 30 days.</p>
+					<button type="button" id="emptyTrashButton">Empty Trash</button>
+				</div>
+			)}
+
+			{viewMode !== "dashboard" && viewMode !== "trash" && (
+			<>
 			<!-- Live Workspace Filter Query Bar -->
 			<div class="search-wrapper">
 					<span class="search-icon">🔍</span>
@@ -2038,15 +2102,33 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 					
 					<button type="submit" class="btn-add-note">Add Note</button>
 				</form>
+			</>
+			)}
 
 			<div class="notes-grid" id="notes">
 	{userNotes.length === 0 ? (
 		<div style="grid-column: 1 / -1; text-align:center; color:rgba(255,255,255,0.4); padding: 60px 20px;">
-			<span>📋</span><p>Your workspace is empty.</p>
+			<span>{viewMode === "trash" ? "🗑️" : "📋"}</span><p>{viewMode === "trash" ? "Your trash is empty." : "Your workspace is empty."}</p>
 		</div>
 	) : (
 		userNotes.map((note) => (
-			<div class="note-item" data-id={note.id} data-user-role={note.user_role} data-category={note.category || "General"} data-pinned={Number(note.is_pinned) === 1 ? "true" : "false"} data-favorite={Number(note.is_favorite) === 1 ? "true" : "false"}>
+			<div id={`note-${note.id}`} class="note-item" data-id={note.id} data-user-role={note.user_role} data-category={note.category || "General"} data-pinned={Number(note.is_pinned) === 1 ? "true" : "false"} data-favorite={Number(note.is_favorite) === 1 ? "true" : "false"}>
+				{viewMode === "trash" ? (
+					<>
+						<div>
+							<span class="note-tag-badge">{note.category || "General"}</span>
+							<h4 data-note-title>{note.title}</h4>
+							<p data-note-content>{note.content}</p>
+							<span class="trash-days-left">{note.days_left} {note.days_left === 1 ? "day" : "days"} left</span>
+						</div>
+						<div class="note-card-actions">
+							<button type="button" class="btn-restore-note" data-id={note.id}>Restore</button>
+							<button type="button" class="btn-delete-forever" data-id={note.id}>Delete Forever</button>
+						</div>
+						<span class="note-date">🗓️ Created {note.date}</span>
+					</>
+				) : (
+				<>
 				<div class="note-controls">
 					<button type="button" class="btn-card-action btn-comment-toggle" data-id={note.id} aria-controls={`drawer-${note.id}`} aria-expanded="false" title="Open comments">💬 Chat <span class="chat-unread-badge" data-unread-count hidden></span></button>
 					{note.user_role === 'owner' && (
@@ -2063,13 +2145,18 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 					<p data-note-content>{note.content}</p>
 					<div class="note-card-actions">
 						<button type="button" class="btn-view-note" data-id={note.id}>View</button>
+						{note.user_role === 'owner' && (
+							<button type="button" class="btn-remind-note" data-id={note.id} title="Schedule a reminder for this note" aria-label="Schedule a reminder for this note">⏰ Remind Me</button>
+						)}
 						<button type="button" class={`btn-note-preference${Number(note.is_pinned) === 1 ? ' is-active' : ''}`} data-preference="pinned" data-id={note.id} aria-pressed={Number(note.is_pinned) === 1}>{Number(note.is_pinned) === 1 ? "📌 Unpin" : "📌 Pin"}</button>
 						<button type="button" class={`btn-note-preference${Number(note.is_favorite) === 1 ? ' is-active' : ''}`} data-preference="favorite" data-id={note.id} aria-pressed={Number(note.is_favorite) === 1}>{Number(note.is_favorite) === 1 ? "★ Remove Favorite" : "☆ Favorite"}</button>
 						{(note.user_role === 'owner' || note.user_role === 'edit') && (
 							<>
 								<button type="button" class="btn-edit-note" data-id={note.id}>Edit</button>
-								<button type="button" class="btn-delete-note" data-id={note.id} title="Delete this note">Delete</button>
 							</>
+						)}
+						{note.user_role === 'owner' && (
+							<button type="button" class="btn-delete-note" data-id={note.id} title="Move this note to Trash" aria-label="Move this note to Trash">🗑️</button>
 						)}
 					</div>
 					{note.attachments?.length > 0 && (
@@ -2131,6 +2218,8 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 						<button type="submit">Send</button>
 					</form>
 				</div>
+				</>
+				)}
 			</div>
 		))
 	)}
@@ -2203,6 +2292,41 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 	</div>
 </dialog>
 
+<dialog id="noteReminderDialog" class="note-dialog" aria-labelledby="noteReminderHeading">
+	<div class="note-dialog-content">
+		<div class="note-dialog-header">
+			<h2 id="noteReminderHeading">Remind me about this note</h2>
+			<button type="button" data-close-note-dialog>Close</button>
+		</div>
+		<form id="noteReminderForm" class="note-edit-form">
+			<input type="hidden" name="noteId" />
+			<div>
+				<label for="noteReminderTitle">Reminder title</label>
+				<input id="noteReminderTitle" name="title" type="text" maxlength="150" required />
+			</div>
+			<div class="note-reminder-fields">
+				<div>
+					<label for="noteReminderDate">Date</label>
+					<input id="noteReminderDate" name="date" type="date" required />
+				</div>
+				<div>
+					<label for="noteReminderTime">Time</label>
+					<input id="noteReminderTime" name="time" type="time" value="09:00" required />
+				</div>
+			</div>
+			<div>
+				<label for="noteReminderDescription">Description (optional)</label>
+				<textarea id="noteReminderDescription" name="description" maxlength="2000"></textarea>
+			</div>
+			<p id="noteReminderStatus" class="note-edit-error" role="alert" hidden></p>
+			<div class="note-dialog-actions">
+				<button type="button" data-close-note-dialog>Cancel</button>
+				<button type="submit">Save reminder</button>
+			</div>
+		</form>
+	</div>
+</dialog>
+
 		<!-- 🔔 Floating Glassmorphic Notification Toast Banner -->
 <div id="notificationToast" class="notification-toast" aria-live="polite">
 	<span id="toastIcon">✨</span>
@@ -2230,12 +2354,12 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 			const cardItem = btn.closest(".note-item");
 			if (!id || !cardItem) return;
 
-			if (confirm("Permanently drop this note out of your workspace records?")) {
+			if (confirm("Move this note to Trash? You can restore it within 30 days.")) {
 				try {
 					cardItem.classList.add("removing");
-					const res = await fetch(`/notes-api?id=${id}`, { method: 'DELETE' });
+					const res = await fetch(`/notes-api?id=${encodeURIComponent(id)}`, { method: 'DELETE' });
 					const data = await res.json();
-					if (data.success) {
+					if (res.ok && data.success) {
 						if (data.warning) showNotificationToast(data.warning, true);
 						setTimeout(() => {
 							cardItem.remove();
@@ -2247,14 +2371,57 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 						}, 300);
 					} else {
 						cardItem.classList.remove("removing");
-						alert(data.message || "Failed to remove workspace entry.");
+						showNotificationToast(data.message || "Failed to move note to Trash.", true);
 					}
-				} catch { 
+				} catch (error) {
+					console.error("Unable to move note to Trash.", error);
 					cardItem.classList.remove("removing");
-					alert("Error deleting workspace entry."); 
+					showNotificationToast("Unable to move note to Trash. Please try again.", true);
 				}
 			}
 		});
+	}
+
+	async function handleTrashCardAction(button: HTMLButtonElement, action: "restore" | "delete") {
+		const noteId = button.dataset.id;
+		const card = getNoteCard(button);
+		if (!noteId || !card) return;
+		if (action === "delete" && !confirm("Permanently delete this note? This cannot be undone.")) return;
+
+		button.disabled = true;
+		try {
+			const response = await fetch(
+				action === "restore"
+					? "/trash-api"
+					: `/trash-api?id=${encodeURIComponent(noteId)}`,
+				action === "restore"
+					? {
+						method: "PUT",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({ action: "restore", id: noteId })
+					}
+					: { method: "DELETE" }
+			);
+			const data = await response.json();
+			if (!response.ok || !data.success) {
+				throw new Error(data.message || `Unable to ${action} this note.`);
+			}
+
+			if (data.warning) showNotificationToast(data.warning, true);
+			card.classList.add("removing");
+			window.setTimeout(() => {
+				card.remove();
+				if (document.querySelectorAll(".notes-grid .note-item").length === 0) {
+					window.location.reload();
+				}
+			}, 300);
+			showNotificationToast(action === "restore" ? "Note restored to My Notes." : "Note permanently deleted.");
+		} catch (error) {
+			console.error(`Unable to ${action} trashed note.`, error);
+			showNotificationToast(error instanceof Error ? error.message : `Unable to ${action} this note.`, true);
+		} finally {
+			button.disabled = false;
+		}
 	}
 
 	function getNoteCard(element: Element | null): HTMLElement | null {
@@ -2360,7 +2527,8 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 
 	// Active Category state caching parameter tracker
 	const requestedNoteFilter = new URLSearchParams(window.location.search).get("filter");
-	let activeCategoryFilter = requestedNoteFilter === "favorites" || requestedNoteFilter === "pinned"
+	const workspaceViewMode = document.querySelector<HTMLElement>(".workspace-content")?.dataset.viewMode || "dashboard";
+	let activeCategoryFilter = requestedNoteFilter && requestedNoteFilter !== "favorites" && requestedNoteFilter !== "pinned"
 		? requestedNoteFilter
 		: "all";
 
@@ -2422,6 +2590,18 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 		const target = event.target;
 		if (!(target instanceof Element)) return;
 
+		const restoreButton = target.closest<HTMLButtonElement>(".btn-restore-note");
+		if (restoreButton) {
+			void handleTrashCardAction(restoreButton, "restore");
+			return;
+		}
+
+		const deleteForeverButton = target.closest<HTMLButtonElement>(".btn-delete-forever");
+		if (deleteForeverButton) {
+			void handleTrashCardAction(deleteForeverButton, "delete");
+			return;
+		}
+
 		const viewButton = target.closest(".btn-view-note");
 		if (viewButton) {
 			const card = getNoteCard(viewButton);
@@ -2436,9 +2616,101 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 			return;
 		}
 
+		const remindButton = target.closest<HTMLButtonElement>(".btn-remind-note");
+		if (remindButton) {
+			const card = getNoteCard(remindButton);
+			const noteId = remindButton.dataset.id;
+			const titleInput = document.getElementById("noteReminderTitle") as HTMLInputElement | null;
+			const noteIdInput = document.querySelector<HTMLInputElement>("#noteReminderForm [name='noteId']");
+			const dateInput = document.getElementById("noteReminderDate") as HTMLInputElement | null;
+			const status = document.getElementById("noteReminderStatus");
+			if (!card || !noteId || !titleInput || !noteIdInput || !dateInput) return;
+
+			titleInput.value = card.querySelector<HTMLElement>("[data-note-title]")?.textContent?.trim() || "";
+			noteIdInput.value = noteId;
+			const today = new Date();
+			dateInput.value = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+			(document.getElementById("noteReminderTime") as HTMLInputElement).value = "09:00";
+			(document.getElementById("noteReminderDescription") as HTMLTextAreaElement).value = "";
+			if (status) {
+				status.hidden = true;
+				status.textContent = "";
+			}
+			(document.getElementById("noteReminderDialog") as HTMLDialogElement | null)?.showModal();
+			titleInput.focus();
+			return;
+		}
+
 		const closeButton = target.closest("[data-close-note-dialog]");
 		if (closeButton) {
 			closeButton.closest("dialog")?.close();
+		}
+	});
+
+	document.getElementById("noteReminderForm")?.addEventListener("submit", async (event) => {
+		event.preventDefault();
+		const form = event.currentTarget as HTMLFormElement;
+		const submitButton = form.querySelector<HTMLButtonElement>('button[type="submit"]');
+		const status = document.getElementById("noteReminderStatus");
+		const formData = new FormData(form);
+		const payload = {
+			title: formData.get("title"),
+			description: formData.get("description"),
+			date: formData.get("date"),
+			time: formData.get("time"),
+			noteId: formData.get("noteId")
+		};
+
+		if (status) {
+			status.hidden = true;
+			status.textContent = "";
+		}
+		if (submitButton) submitButton.disabled = true;
+		try {
+			const response = await fetch("/reminders-api", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify(payload)
+			});
+			const data = await response.json();
+			if (!response.ok || !data.success) {
+				throw new Error(data.message || "Unable to save this reminder.");
+			}
+
+			(document.getElementById("noteReminderDialog") as HTMLDialogElement).close();
+			showNotificationToast("Reminder created for this note.");
+			setTimeout(() => {
+			window.location.reload();
+			}, 1500);
+		} catch (error) {
+			console.error("Note reminder creation error:", error);
+			if (status) {
+				status.textContent = error instanceof Error ? error.message : "Unable to save this reminder.";
+				status.hidden = false;
+			}
+		} finally {
+			if (submitButton) submitButton.disabled = false;
+		}
+	});
+
+	document.getElementById("emptyTrashButton")?.addEventListener("click", async (event) => {
+		const button = event.currentTarget as HTMLButtonElement;
+		if (!confirm("Permanently delete all notes in Trash? This cannot be undone.")) return;
+
+		button.disabled = true;
+		try {
+			const response = await fetch("/trash-api?all=true", { method: "DELETE" });
+			const data = await response.json();
+			if (!response.ok || !data.success) {
+				throw new Error(data.message || "Unable to empty Trash.");
+			}
+			if (data.warning) showNotificationToast(data.warning, true);
+			else showNotificationToast("Trash emptied.");
+			window.setTimeout(() => window.location.reload(), 300);
+		} catch (error) {
+			console.error("Unable to empty Trash.", error);
+			showNotificationToast(error instanceof Error ? error.message : "Unable to empty Trash.", true);
+			button.disabled = false;
 		}
 	});
 
@@ -2482,6 +2754,7 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 			updateDashboardStatistics();
 			updateWorkspaceVisibility();
 			showNotificationToast("Note updated successfully.");
+			window.location.reload();
 		} catch (updateError) {
 			console.error("Unable to update note.", updateError);
 			if (error) {
@@ -2495,6 +2768,20 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 
 	const notesGrid = document.querySelector(".notes-grid");
 	updateDashboardStatistics();
+
+	const dashboardStyleScopeAttributes = Array.from(
+		document.querySelector<HTMLElement>(".workspace-content")?.attributes ?? []
+	)
+		.filter(({ name }) => name.startsWith("data-astro-cid-"))
+		.map(({ name }) => name);
+
+	function applyDashboardStyleScope(element: HTMLElement) {
+		for (const node of [element, ...Array.from(element.querySelectorAll("*"))]) {
+			for (const attribute of dashboardStyleScopeAttributes) {
+				node.setAttribute(attribute, "");
+			}
+		}
+	}
 
 	const selectedPreviewUrls = new WeakMap<HTMLElement, string[]>();
 
@@ -2595,14 +2882,21 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 			const cardCategory = card.getAttribute("data-category") || "General";
 
 			const matchesSearch = titleText.includes(searchQuery) || contentText.includes(searchQuery);
+			const noteCard = card as HTMLElement;
+			const matchesView = workspaceViewMode === "favorites"
+				? noteCard.dataset.favorite === "true"
+				: workspaceViewMode === "pinned"
+					? noteCard.dataset.pinned === "true"
+					: true;
 			const matchesTab = activeCategoryFilter === "all"
-				|| (activeCategoryFilter === "favorites"
-					? (card as HTMLElement).dataset.favorite === "true"
+				? true
+				: activeCategoryFilter === "favorites"
+					? noteCard.dataset.favorite === "true"
 					: activeCategoryFilter === "pinned"
-						? (card as HTMLElement).dataset.pinned === "true"
-						: cardCategory === activeCategoryFilter);
+						? noteCard.dataset.pinned === "true"
+						: cardCategory === activeCategoryFilter;
 
-			if (matchesSearch && matchesTab) {
+			if (matchesSearch && matchesView && matchesTab) {
 				card.classList.remove("filtered-out");
 			} else {
 				card.classList.add("filtered-out");
@@ -2637,8 +2931,9 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 	});
 
 	if (activeCategoryFilter !== "all") {
-		document.querySelectorAll(".tab-btn").forEach((btn) => btn.classList.remove("active"));
-		document.querySelector(`.tab-btn[data-filter="${activeCategoryFilter}"]`)?.classList.add("active");
+		document.querySelectorAll<HTMLButtonElement>(".tab-btn").forEach((btn) => {
+			btn.classList.toggle("active", btn.dataset.filter === activeCategoryFilter);
+		});
 	}
 	updateWorkspaceVisibility();
 
@@ -2716,19 +3011,21 @@ addNoteForm?.addEventListener("submit", async (e) => {
 		</div>
 	`;
 	notesGrid.insertAdjacentHTML("afterbegin", skeletonHTML);
+	const skeletonCard = document.getElementById("activeCreationSkeleton");
+	if (skeletonCard) applyDashboardStyleScope(skeletonCard);
 
 	const formData = new FormData(addNoteForm);
 
 	try {
 		const res = await fetch('/notes-api', { method: 'POST', body: formData });
 		const data = await res.json();
-		const skeletonCard = document.getElementById("activeCreationSkeleton");
 
 		if (data.success && skeletonCard) {
 			skeletonCard.classList.remove("note-skeleton");
 			skeletonCard.removeAttribute("id");
 			skeletonCard.setAttribute("data-category", data.category);
 			skeletonCard.setAttribute("data-id", String(data.id));
+			skeletonCard.id = `note-${data.id}`;
 			skeletonCard.setAttribute("data-user-role", "owner");
 			skeletonCard.setAttribute("data-pinned", "false");
 			skeletonCard.setAttribute("data-favorite", "false");
@@ -2749,10 +3046,11 @@ skeletonCard.innerHTML = `
 		<p data-note-content>${escapeHTML(contentValue)}</p>
 		<div class="note-card-actions">
 			<button type="button" class="btn-view-note" data-id="${data.id}">View</button>
+		<button type="button" class="btn-remind-note" data-id="${data.id}" title="Schedule a reminder for this note" aria-label="Schedule a reminder for this note">⏰ Remind Me</button>
 			<button type="button" class="btn-note-preference" data-preference="pinned" data-id="${data.id}" aria-pressed="false">📌 Pin</button>
 			<button type="button" class="btn-note-preference" data-preference="favorite" data-id="${data.id}" aria-pressed="false">☆ Favorite</button>
 			<button type="button" class="btn-edit-note" data-id="${data.id}">Edit</button>
-			<button type="button" class="btn-delete-note" data-id="${data.id}" title="Delete this note">Delete</button>
+			<button type="button" class="btn-delete-note" data-id="${data.id}" title="Move this note to Trash" aria-label="Move this note to Trash">🗑️</button>
 		</div>
 		${attachmentMarkup}
 	</div>
@@ -2782,6 +3080,7 @@ skeletonCard.innerHTML = `
 		</form>
 	</div>
 `;
+applyDashboardStyleScope(skeletonCard);
 for (const button of skeletonCard.querySelectorAll<HTMLButtonElement>(".btn-note-preference")) {
 	button.addEventListener("click", () => updateNotePreference(button));
 }
@@ -3555,7 +3854,6 @@ function attachShareListener(btn: Element | null) {
 
 document.querySelectorAll(".btn-share-note").forEach((btn) => attachShareListener(btn));
 
-const themePreferenceSelect = document.getElementById("themePreference") as HTMLSelectElement | null;
 const darkModeToggle = document.getElementById("darkModeToggle") as HTMLInputElement | null;
 const colorSchemeQuery = window.matchMedia("(prefers-color-scheme: dark)");
 const themeStorageKey = "notepad-theme-preference";
@@ -3566,7 +3864,6 @@ function applyThemePreference(preference: string, persist: boolean = false) {
 	const theme = preference === "system" ? (colorSchemeQuery.matches ? "dark" : "light") : preference;
 	document.documentElement.dataset.themePreference = preference;
 	document.documentElement.dataset.theme = theme;
-	if (themePreferenceSelect) themePreferenceSelect.value = preference;
 	if (darkModeToggle) darkModeToggle.checked = theme === "dark";
 
 	if (persist) {
@@ -3580,10 +3877,6 @@ function applyThemePreference(preference: string, persist: boolean = false) {
 }
 
 applyThemePreference(document.documentElement.dataset.themePreference || "system");
-
-themePreferenceSelect?.addEventListener("change", () => {
-	applyThemePreference(themePreferenceSelect.value, true);
-});
 
 darkModeToggle?.addEventListener("change", () => {
 	applyThemePreference(darkModeToggle.checked ? "dark" : "light", true);

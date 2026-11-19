@@ -1,0 +1,270 @@
+---
+interface Props {
+	displayName: string;
+	fallbackDisplayName: string;
+	address: string;
+	bio: string;
+	avatarUrl: string;
+}
+
+const { displayName, fallbackDisplayName, address, bio, avatarUrl } = Astro.props;
+---
+
+<dialog id="profileSettingsDialog" class="profile-settings-dialog" aria-labelledby="profileSettingsHeading">
+	<div class="profile-dialog-content">
+		<div class="profile-dialog-header">
+			<h2 id="profileSettingsHeading">Edit Profile</h2>
+			<button type="button" data-close-profile-dialog aria-label="Close profile settings">Close</button>
+		</div>
+		<form id="profileForm" enctype="multipart/form-data">
+			<input type="hidden" id="compressedAvatarString" name="compressedAvatarString" value="" />
+			<div class="profile-avatar-field">
+				<img class="profile-avatar-preview" src={avatarUrl} alt="Avatar preview" />
+				<div>
+					<label for="avatarFileInput">Avatar Photo</label>
+					<input type="file" id="avatarFileInput" name="avatarFile" accept="image/*" />
+				</div>
+			</div>
+			<div>
+				<label for="profileDisplayName">Display Name</label>
+				<input type="text" id="profileDisplayName" name="displayName" value={displayName} maxlength="50" />
+			</div>
+			<div>
+				<label for="profileLocation">Location</label>
+				<input type="text" id="profileLocation" name="address" value={address} />
+			</div>
+			<div>
+				<label for="profileBio">Bio</label>
+				<textarea id="profileBio" name="bio" maxlength="250" placeholder="Tell us about yourself...">{bio}</textarea>
+			</div>
+			<p class="profile-form-status" id="profileFormStatus" role="status" aria-live="polite"></p>
+			<div class="profile-dialog-actions">
+				<button type="submit">Save Profile</button>
+			</div>
+		</form>
+	</div>
+</dialog>
+
+<script>
+	const profileForm = document.getElementById("profileForm") as HTMLFormElement | null;
+	const profileDialog = document.getElementById("profileSettingsDialog") as HTMLDialogElement | null;
+	const profileStatus = document.getElementById("profileFormStatus");
+	const avatarFileInput = document.getElementById("avatarFileInput") as HTMLInputElement | null;
+	const avatarPreview = document.querySelector<HTMLImageElement>("[data-profile-avatar]");
+	const dialogAvatarPreview = document.querySelector<HTMLImageElement>(".profile-avatar-preview");
+
+	document.querySelector("[data-open-profile-dialog]")?.addEventListener("click", () => profileDialog?.showModal());
+	document.querySelector("[data-close-profile-dialog]")?.addEventListener("click", () => profileDialog?.close());
+
+	function setProfileStatus(message: string, isError = false) {
+		if (!profileStatus) return;
+		profileStatus.textContent = message;
+		profileStatus.setAttribute("role", isError ? "alert" : "status");
+	}
+
+	avatarFileInput?.addEventListener("change", () => {
+		const file = avatarFileInput.files?.[0];
+		if (!file) return;
+		if (!file.type.startsWith("image/")) {
+			avatarFileInput.value = "";
+			setProfileStatus("Choose a valid image file.", true);
+			return;
+		}
+
+		const reader = new FileReader();
+		reader.onerror = () => setProfileStatus("Unable to read the selected image.", true);
+		reader.onload = () => {
+			if (typeof reader.result !== "string") {
+				setProfileStatus("Unable to preview the selected image.", true);
+				return;
+			}
+
+			const image = new Image();
+			image.onerror = () => setProfileStatus("Unable to preview the selected image.", true);
+			image.onload = () => {
+				const canvas = document.createElement("canvas");
+				const scale = Math.min(1, 300 / image.width, 300 / image.height);
+				canvas.width = Math.max(1, Math.round(image.width * scale));
+				canvas.height = Math.max(1, Math.round(image.height * scale));
+				const context = canvas.getContext("2d");
+				if (!context) {
+					setProfileStatus("Unable to process the selected image.", true);
+					return;
+				}
+
+				try {
+					context.drawImage(image, 0, 0, canvas.width, canvas.height);
+					const compressedAvatar = canvas.toDataURL("image/jpeg", 0.6);
+					const hiddenPayload = document.getElementById("compressedAvatarString") as HTMLInputElement | null;
+					if (hiddenPayload) hiddenPayload.value = compressedAvatar;
+					if (avatarPreview) avatarPreview.src = compressedAvatar;
+					if (dialogAvatarPreview) dialogAvatarPreview.src = compressedAvatar;
+					setProfileStatus("");
+				} catch (error) {
+					console.error("Avatar image processing error:", error);
+					setProfileStatus("Unable to process the selected image.", true);
+				}
+			};
+			image.src = reader.result;
+		};
+		reader.readAsDataURL(file);
+	});
+
+	profileForm?.addEventListener("submit", async (event) => {
+		event.preventDefault();
+		const submitButton = profileForm.querySelector<HTMLButtonElement>("button[type='submit']");
+		if (submitButton) submitButton.disabled = true;
+		setProfileStatus("");
+		const formData = new FormData(profileForm);
+
+		try {
+			const response = await fetch("/profile-api", {
+				method: "POST",
+				body: formData
+			});
+			const result = await response.json();
+			if (!response.ok || !result.success) {
+				throw new Error(result.message || "Unable to update profile.");
+			}
+
+			const enteredName = (formData.get("displayName")?.toString() || "").trim();
+			const displayNameHeading = document.querySelector<HTMLElement>("[data-profile-display-name]");
+			if (displayNameHeading) {
+				displayNameHeading.textContent = enteredName || displayNameHeading.dataset.fallbackName || "";
+			}
+			setProfileStatus("Profile updated.");
+			profileDialog?.close();
+		} catch (error) {
+			console.error("Profile update error:", error);
+			setProfileStatus(error instanceof Error ? error.message : "Unable to update profile.", true);
+		} finally {
+			if (submitButton) submitButton.disabled = false;
+		}
+	});
+</script>
+
+<style>
+	.profile-settings-dialog {
+		width: min(520px, 92vw);
+		max-width: 92vw;
+		max-height: 88vh;
+		padding: 20px;
+		border: 1px solid var(--page-border, rgba(255, 255, 255, 0.22));
+		border-radius: 18px;
+		background: #21143b;
+		color: #fff;
+	}
+
+	.profile-settings-dialog::backdrop {
+		background: rgba(0, 0, 0, 0.72);
+	}
+
+	.profile-dialog-content {
+		display: grid;
+		gap: 16px;
+		max-height: calc(88vh - 40px);
+		overflow-y: auto;
+	}
+
+	.profile-dialog-header,
+	.profile-avatar-field,
+	.profile-dialog-actions {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 12px;
+	}
+
+	.profile-dialog-header h2 {
+		margin: 0;
+		font-size: 20px;
+	}
+
+	.profile-settings-dialog form {
+		display: grid;
+		gap: 12px;
+	}
+
+	.profile-settings-dialog label {
+		display: block;
+		margin: 0 0 5px;
+		color: rgba(255, 255, 255, 0.8);
+		font-size: 11px;
+		font-weight: 700;
+	}
+
+	.profile-settings-dialog input,
+	.profile-settings-dialog textarea {
+		width: 100%;
+		padding: 10px 12px;
+		border: 1px solid rgba(255, 255, 255, 0.22);
+		border-radius: 10px;
+		background: rgba(255, 255, 255, 0.1);
+		color: #fff;
+		font: inherit;
+		font-size: 13px;
+	}
+
+	.profile-settings-dialog input[type="file"] {
+		padding: 7px;
+		font-size: 11px;
+	}
+
+	.profile-settings-dialog textarea {
+		min-height: 72px;
+		resize: vertical;
+	}
+
+	.profile-avatar-preview {
+		width: 72px;
+		height: 72px;
+		flex: 0 0 auto;
+		border: 3px solid rgba(255, 255, 255, 0.4);
+		border-radius: 50%;
+		object-fit: cover;
+	}
+
+	.profile-avatar-field > div {
+		flex: 1;
+		min-width: 0;
+	}
+
+	.profile-form-status {
+		min-height: 18px;
+		margin: 0;
+		color: rgba(255, 255, 255, 0.78);
+		font-size: 12px;
+	}
+
+	.profile-form-status[role="alert"] {
+		color: #ffb4b4;
+	}
+
+	.profile-settings-dialog button {
+		width: auto;
+		padding: 9px 13px;
+		border: 1px solid rgba(255, 255, 255, 0.25);
+		border-radius: 11px;
+		background: rgba(255, 255, 255, 0.12);
+		color: #fff;
+		font: inherit;
+		font-size: 12px;
+		cursor: pointer;
+	}
+
+	.profile-settings-dialog .profile-dialog-actions {
+		justify-content: flex-end;
+	}
+
+	.profile-settings-dialog .profile-dialog-actions button {
+		background: #fff;
+		color: #6a11cb;
+		font-weight: 700;
+	}
+
+	:root[data-theme="dark"] .profile-settings-dialog .profile-dialog-actions button {
+		border-color: #c4b5fd;
+		background: #c4b5fd;
+		color: #21143b;
+	}
+</style>

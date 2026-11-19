@@ -1,22 +1,24 @@
 ---
 interface Props {
 	currentPage: "dashboard" | "calendar" | "reminders";
+	currentSection?: "notes" | "favorites" | "pinned" | "trash";
 	showPreferences?: boolean;
 	showLogout?: boolean;
 }
 
-const { currentPage, showPreferences = true, showLogout = true } = Astro.props;
+const { currentPage, currentSection, showPreferences = true, showLogout = true } = Astro.props;
 ---
 
 <nav class="workspace-navigation" aria-label="Workspace navigation">
 	<h2>Workspace Navigation</h2>
 	<div class="workspace-navigation-links">
-		<a href="/dashboard" aria-current={currentPage === "dashboard" ? "page" : undefined}>Dashboard</a>
-		<a href="/dashboard#addNoteForm">My Notes</a>
-		<a href="/dashboard?filter=favorites#notes">Favorites</a>
-		<a href="/dashboard?filter=pinned#notes">Pinned Notes</a>
-		<a href="/calendar" aria-current={currentPage === "calendar" ? "page" : undefined}>Calendar</a>
-		<a href="/reminders" aria-current={currentPage === "reminders" ? "page" : undefined}>Reminders</a>
+		<a href="/dashboard" aria-current={currentPage === "dashboard" && !currentSection ? "page" : undefined}><span class="workspace-navigation-icon" aria-hidden="true">🏠</span>Dashboard</a>
+		<a href="/dashboard?view=notes" aria-current={currentSection === "notes" ? "page" : undefined}><span class="workspace-navigation-icon" aria-hidden="true">📝</span>My Notes</a>
+		<a href="/dashboard?view=favorites" aria-current={currentSection === "favorites" ? "page" : undefined}><span class="workspace-navigation-icon" aria-hidden="true">⭐</span>Favorites</a>
+		<a href="/dashboard?view=pinned" aria-current={currentSection === "pinned" ? "page" : undefined}><span class="workspace-navigation-icon" aria-hidden="true">📌</span>Pinned Notes</a>
+		<a href="/calendar" aria-current={currentPage === "calendar" ? "page" : undefined}><span class="workspace-navigation-icon" aria-hidden="true">📅</span>Calendar</a>
+		<a href="/reminders" aria-current={currentPage === "reminders" ? "page" : undefined}><span class="workspace-navigation-icon" aria-hidden="true">⏰</span>Reminders</a>
+		<a href="/dashboard?view=trash" aria-current={currentSection === "trash" ? "page" : undefined}><span class="workspace-navigation-icon" aria-hidden="true">🗑️</span>Trash</a>
 	</div>
 
 	{showPreferences && (
@@ -27,7 +29,6 @@ const { currentPage, showPreferences = true, showLogout = true } = Astro.props;
 				<input type="checkbox" data-workspace-theme-toggle aria-label="Toggle dark mode" />
 			</label>
 			<p class="workspace-theme-status" data-workspace-theme-status role="status" aria-live="polite"></p>
-			<a class="workspace-settings-link" href="/dashboard#dashboardSettingsHeading">Settings</a>
 		</section>
 	)}
 
@@ -89,8 +90,7 @@ const { currentPage, showPreferences = true, showLogout = true } = Astro.props;
 		gap: 6px;
 	}
 
-	.workspace-navigation-links a,
-	.workspace-settings-link {
+	.workspace-navigation-links a {
 		display: block;
 		padding: 9px 12px;
 		border: 1px solid var(--dashboard-border, rgba(255, 255, 255, 0.12));
@@ -102,10 +102,15 @@ const { currentPage, showPreferences = true, showLogout = true } = Astro.props;
 		transition: background-color 0.2s ease, transform 0.2s ease;
 	}
 
-	.workspace-navigation-links a:hover,
-	.workspace-settings-link:hover {
+	.workspace-navigation-links a:hover {
 		background: var(--dashboard-surface-hover, rgba(255, 255, 255, 0.2));
 		transform: translateX(2px);
+	}
+
+	.workspace-navigation-icon {
+		display: inline-block;
+		width: 1.8em;
+		text-align: center;
 	}
 
 	.workspace-navigation-links a[aria-current="page"] {

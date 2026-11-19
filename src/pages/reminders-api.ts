@@ -9,12 +9,16 @@ type ReminderInput = {
 	date?: unknown;
 	time?: unknown;
 	completed?: unknown;
+	noteId?: unknown;
 };
 
 function jsonResponse(data: Record<string, unknown>, status = 200) {
 	return new Response(JSON.stringify(data), {
 		status,
-		headers: { 'Content-Type': 'application/json' }
+		headers: {
+			'Content-Type': 'application/json',
+			'Cache-Control': 'no-store'
+		}
 	});
 }
 
@@ -79,11 +83,15 @@ export const GET: APIRoute = async ({ cookies, url }) => {
 		const userId = await getUserId(cookies);
 		if (!userId) return jsonResponse({ success: false, message: 'Unauthorized session.' }, 401);
 
-		const fields = `id, title, description,
-			DATE_FORMAT(scheduled_at, '%Y-%m-%d') AS date,
-			TIME_FORMAT(scheduled_at, '%H:%i') AS time,
-			is_completed AS completed,
-			DATE_FORMAT(completed_at, '%Y-%m-%d %H:%i:%s') AS completedAt`;
+		const fields = `r.id, r.note_id AS noteId, n.title AS noteTitle,
+			r.title, r.description,
+			DATE_FORMAT(r.scheduled_at, '%Y-%m-%d') AS date,
+			TIME_FORMAT(r.scheduled_at, '%H:%i') AS time,
+			r.is_completed AS completed,
+			DATE_FORMAT(r.completed_at, '%Y-%m-%d %H:%i:%s') AS completedAt`;
+		const joinClause = `FROM reminders r
+			LEFT JOIN notes n ON r.note_id = n.id AND n.deleted_at IS NULL`;
+
 		const rangeStart = url.searchParams.get('from');
 		const rangeEnd = url.searchParams.get('to');
 
@@ -93,9 +101,9 @@ export const GET: APIRoute = async ({ cookies, url }) => {
 			}
 			const [rows]: any = await pool.execute(
 				`SELECT ${fields}
-				 FROM reminders
-				 WHERE user_id = ? AND scheduled_at >= ? AND scheduled_at < DATE_ADD(?, INTERVAL 1 DAY)
-				 ORDER BY scheduled_at ASC`,
+				 ${joinClause}
+				 WHERE r.user_id = ? AND r.scheduled_at >= ? AND r.scheduled_at < DATE_ADD(?, INTERVAL 1 DAY)
+				 ORDER BY r.scheduled_at ASC`,
 				[userId, `${rangeStart} 00:00:00`, `${rangeEnd} 00:00:00`]
 			);
 			return jsonResponse({ success: true, reminders: rows });
@@ -104,11 +112,11 @@ export const GET: APIRoute = async ({ cookies, url }) => {
 		if (url.searchParams.get('mode') === 'monitor') {
 			const [rows]: any = await pool.execute(
 				`SELECT ${fields}
-				 FROM reminders
-				 WHERE user_id = ? AND is_completed = 0
-				   AND scheduled_at >= DATE_SUB(NOW(), INTERVAL 1 DAY)
-				   AND scheduled_at <= DATE_ADD(NOW(), INTERVAL 30 DAY)
-				 ORDER BY scheduled_at ASC`,
+				 ${joinClause}
+				 WHERE r.user_id = ? AND r.is_completed = 0
+				   AND r.scheduled_at >= DATE_SUB(NOW(), INTERVAL 1 DAY)
+				   AND r.scheduled_at <= DATE_ADD(NOW(), INTERVAL 30 DAY)
+				 ORDER BY r.scheduled_at ASC`,
 				[userId]
 			);
 			return jsonResponse({ success: true, reminders: rows });
@@ -116,9 +124,9 @@ export const GET: APIRoute = async ({ cookies, url }) => {
 
 		const [rows]: any = await pool.execute(
 			`SELECT ${fields}
-			 FROM reminders
-			 WHERE user_id = ?
-			 ORDER BY is_completed ASC, scheduled_at DESC`,
+			 ${joinClause}
+			 WHERE r.user_id = ?
+			 ORDER BY r.is_completed ASC, r.scheduled_at DESC`,
 			[userId]
 		);
 		return jsonResponse({ success: true, reminders: rows });
@@ -145,9 +153,30 @@ export const POST: APIRoute = async ({ cookies, request }) => {
 
 		const reminder = validateReminder(payload);
 		if ('error' in reminder) return jsonResponse({ success: false, message: reminder.error }, 400);
+
+		let noteId: string | null = null;
+		if (payload.noteId !== undefined && payload.noteId !== null && payload.noteId !== '') {
+			const submittedNoteId = payload.noteId;
+			const parsedId = typeof submittedNoteId === 'string' || typeof submittedNoteId === 'number'
+				? String(submittedNoteId)
+				: '';
+			if (!/^[1-9]\d{0,19}$/.test(parsedId) ||
+				(typeof submittedNoteId === 'number' && !Number.isSafeInteger(submittedNoteId))) {
+				return jsonResponse({ success: false, message: 'Invalid note reference.' }, 400);
+			}
+			const [noteRows]: any = await pool.execute(
+				'SELECT id FROM notes WHERE id = ? AND user_id = ? AND deleted_at IS NULL',
+				[parsedId, userId]
+			);
+			if (noteRows.length !== 1) {
+				return jsonResponse({ success: false, message: 'Linked note not found.' }, 404);
+			}
+			noteId = parsedId;
+		}
+
 		await pool.execute(
-			'INSERT INTO reminders (user_id, title, description, scheduled_at) VALUES (?, ?, ?, ?)',
-			[userId, reminder.title, reminder.description, reminder.scheduledAt]
+			'INSERT INTO reminders (user_id, note_id, title, description, scheduled_at) VALUES (?, ?, ?, ?, ?)',
+			[userId, noteId, reminder.title, reminder.description, reminder.scheduledAt]
 		);
 		return jsonResponse({ success: true });
 	} catch (error) {
@@ -223,11 +252,14 @@ export const DELETE: APIRoute = async ({ cookies, url }) => {
 		if (!reminderId || !/^[1-9]\d{0,19}$/.test(reminderId)) {
 			return jsonResponse({ success: false, message: 'A valid reminder identifier is required.' }, 400);
 		}
+
 		const [result]: any = await pool.execute(
 			'DELETE FROM reminders WHERE id = ? AND user_id = ?',
 			[reminderId, userId]
 		);
-		if (result.affectedRows !== 1) return jsonResponse({ success: false, message: 'Reminder not found.' }, 404);
+		if (result.affectedRows !== 1) {
+			return jsonResponse({ success: false, message: 'Reminder not found.' }, 404);
+		}
 		return jsonResponse({ success: true });
 	} catch (error) {
 		console.error('Reminder deletion error:', error);

@@ -58,6 +58,7 @@ export const PUT: APIRoute = async ({ request, url, cookies }) => {
       `SELECT n.id
        FROM notes n
        WHERE n.id = ?
+         AND n.deleted_at IS NULL
          AND (
            n.user_id = ?
            OR EXISTS (

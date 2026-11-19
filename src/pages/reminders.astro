@@ -1,6 +1,7 @@
 ---
 import { pool } from '../lib/db';
 import WorkspaceNavigation from '../components/WorkspaceNavigation.astro';
+import ProfileSettingsDialog from '../components/ProfileSettingsDialog.astro';
 
 export const prerender = false;
 
@@ -18,12 +19,14 @@ if (sessionCookie?.value.trim()) {
 if (!sessionData?.username) return Astro.redirect('/');
 
 const [userRows]: any = await pool.execute(
-	'SELECT display_name, avatar_url FROM users WHERE BINARY username = ?',
+	'SELECT display_name, avatar_url, address, bio FROM users WHERE BINARY username = ?',
 	[sessionData.username]
 );
 if (userRows.length !== 1) return Astro.redirect('/');
 const displayName = userRows[0].display_name || sessionData.username;
 const avatarUrl = userRows[0].avatar_url || "/default-avatar.png";
+const address = userRows[0].address || "";
+const bio = userRows[0].bio || "";
 ---
 
 <!doctype html>
@@ -98,23 +101,44 @@ const avatarUrl = userRows[0].avatar_url || "/default-avatar.png";
 				object-fit: cover;
 			}
 
+			.profile-card > .avatar-preview {
+				width: 100px;
+				height: 100px;
+				transition: transform 0.2s ease, border-color 0.2s ease;
+			}
+
+			.profile-card > .avatar-preview:hover {
+				transform: scale(1.05);
+				border-color: #fff;
+			}
+
 			.profile-card h1 {
-				margin: 10px 0 3px;
-				font-size: 20px;
+				margin: 10px 0 2px;
+				font-size: 22px;
 				overflow-wrap: anywhere;
 			}
 
 			.profile-card > p {
-				margin: 0;
+				margin: 0 0 15px;
 				color: var(--page-muted);
 				font-size: 12px;
 			}
 
-			.profile-edit-link {
+			.btn-edit-profile {
 				display: inline-block;
-				margin-top: 12px;
-				color: #e2d5ff;
+				width: auto;
+				margin: -6px 0 12px;
+				padding: 7px 12px;
+				border: 1px solid rgba(255, 255, 255, 0.25);
+				border-radius: 20px;
+				background: rgba(255, 255, 255, 0.12);
+				color: #fff;
 				font-size: 11px;
+				cursor: pointer;
+			}
+
+			.btn-edit-profile:hover {
+				background: rgba(255, 255, 255, 0.22);
 			}
 
 			.reminders-header {
@@ -299,6 +323,18 @@ const avatarUrl = userRows[0].avatar_url || "/default-avatar.png";
 				font-size: 11px;
 			}
 
+			.reminder-note-link {
+				display: inline-block;
+				margin-top: 8px;
+				color: #e2d5ff;
+				font-size: 11px;
+				text-decoration: none;
+			}
+
+			.reminder-note-link:hover {
+				text-decoration: underline;
+			}
+
 			.reminder-item-actions {
 				display: flex;
 				flex: 0 0 auto;
@@ -374,10 +410,10 @@ const avatarUrl = userRows[0].avatar_url || "/default-avatar.png";
 	<body>
 		<div class="workspace-layout">
 			<aside class="glass-card profile-card">
-				<img class="avatar" src={avatarUrl} alt="Profile" />
-				<h1>{displayName}</h1>
+				<img class="avatar avatar-preview" src={avatarUrl} alt="Avatar" data-profile-avatar />
+				<h1 data-profile-display-name data-fallback-name={sessionData.username}>{displayName}</h1>
 				<p>Profile Station</p>
-				<a class="profile-edit-link" href="/dashboard#profileForm">Edit profile</a>
+				<button type="button" class="btn-edit-profile" data-open-profile-dialog aria-haspopup="dialog" aria-controls="profileSettingsDialog">Edit Profile</button>
 				<WorkspaceNavigation currentPage="reminders" />
 			</aside>
 
@@ -441,6 +477,14 @@ const avatarUrl = userRows[0].avatar_url || "/default-avatar.png";
 			</main>
 		</div>
 
+		<ProfileSettingsDialog
+			displayName={userRows[0].display_name || ""}
+			fallbackDisplayName={sessionData.username}
+			address={address}
+			bio={bio}
+			avatarUrl={avatarUrl}
+		/>
+
 		<script>
 			type Reminder = {
 				id: number | string;
@@ -449,6 +493,8 @@ const avatarUrl = userRows[0].avatar_url || "/default-avatar.png";
 				date: string;
 				time: string;
 				completed: number | boolean;
+				noteId?: number | string | null;
+				noteTitle?: string | null;
 			};
 
 			const reminderForm = document.getElementById("reminderForm") as HTMLFormElement;
@@ -461,6 +507,7 @@ const avatarUrl = userRows[0].avatar_url || "/default-avatar.png";
 			let reminders: Reminder[] = [];
 			let editingCompleted = false;
 			let initialReminderOpened = false;
+			let reminderLoadRequestId = 0;
 
 			function localDateKey(date: Date) {
 				return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
@@ -520,6 +567,14 @@ const avatarUrl = userRows[0].avatar_url || "/default-avatar.png";
 				time.textContent = date.toLocaleString();
 				main.append(time);
 
+				if (reminder.noteId && reminder.noteTitle) {
+					const noteLink = document.createElement("a");
+					noteLink.className = "reminder-note-link";
+					noteLink.href = `/dashboard?view=notes#note-${encodeURIComponent(String(reminder.noteId))}`;
+					noteLink.textContent = `📝 From: ${reminder.noteTitle}`;
+					main.append(noteLink);
+				}
+
 				const actions = document.createElement("div");
 				actions.className = "reminder-item-actions";
 				const completed = Boolean(Number(reminder.completed));
@@ -564,12 +619,14 @@ const avatarUrl = userRows[0].avatar_url || "/default-avatar.png";
 			}
 
 			async function loadReminders() {
+				const requestId = ++reminderLoadRequestId;
 				try {
 					const response = await fetch("/reminders-api");
 					const data = await response.json();
 					if (!response.ok || !data.success || !Array.isArray(data.reminders)) {
 						throw new Error(data.message || "Unable to load reminders.");
 					}
+					if (requestId !== reminderLoadRequestId) return;
 					reminders = data.reminders;
 					renderReminders();
 					const reminderId = new URLSearchParams(location.search).get("id");
@@ -579,6 +636,7 @@ const avatarUrl = userRows[0].avatar_url || "/default-avatar.png";
 						beginEdit(requested);
 					}
 				} catch (error) {
+					if (requestId !== reminderLoadRequestId) return;
 					console.error("Reminder loading error:", error);
 					setStatus(error instanceof Error ? error.message : "Unable to load reminders.", true);
 				}
@@ -679,7 +737,13 @@ const avatarUrl = userRows[0].avatar_url || "/default-avatar.png";
 
 			clearForm();
 			void loadReminders();
-			window.setInterval(renderReminders, 60000);
+			document.addEventListener("visibilitychange", () => {
+				if (document.visibilityState === "visible") void loadReminders();
+			});
+			window.addEventListener("focus", () => void loadReminders());
+			window.setInterval(() => {
+				if (document.visibilityState === "visible") void loadReminders();
+			}, 60000);
 		</script>
 	</body>
 </html>
