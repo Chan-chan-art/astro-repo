@@ -1,25 +1,8 @@
 import type { APIRoute } from 'astro';
 import { pool } from '../lib/db';
-import crypto from 'node:crypto'; // Built-in Node.js module
+import { verifyPassword } from '../lib/password';
 
 export const prerender = false;
-
-// Secure helper to verify standard text against stored salt hashes
-function verifyPasswordNative(password: string, storedValue: string): boolean {
-  try {
-    // Split our custom saved structure back into its raw components
-    const [salt, originalHash] = storedValue.split(':');
-    if (!salt || !originalHash) return false;
-
-    // Re-hash the login password attempt using the exact same salt string
-    const verifyHash = crypto.scryptSync(password, salt, 64).toString('hex');
-    
-    // Check if the freshly generated hash matches the stored record precisely
-    return crypto.timingSafeEqual(Buffer.from(verifyHash), Buffer.from(originalHash));
-  } catch {
-    return false;
-  }
-}
 
 export const POST: APIRoute = async ({ request, cookies }) => {
   try {
@@ -52,7 +35,7 @@ export const POST: APIRoute = async ({ request, cookies }) => {
     const storedPasswordHash = userRows[0].password;
 
     // 3. Cryptographically verify input against our scrypt signature
-    const isPasswordValid = verifyPasswordNative(password, storedPasswordHash);
+    const isPasswordValid = verifyPassword(password, storedPasswordHash);
 
     if (!isPasswordValid) {
       return new Response(

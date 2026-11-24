@@ -9,6 +9,7 @@ type ReminderInput = {
 	date?: unknown;
 	time?: unknown;
 	completed?: unknown;
+	snoozeMinutes?: unknown;
 	noteId?: unknown;
 };
 
@@ -203,6 +204,31 @@ export const PUT: APIRoute = async ({ cookies, request, url }) => {
 		}
 		if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
 			return jsonResponse({ success: false, message: 'Invalid reminder update request.' }, 400);
+		}
+
+		if (payload.snoozeMinutes !== undefined) {
+			if (payload.snoozeMinutes !== 60 ||
+				payload.title !== undefined || payload.description !== undefined ||
+				payload.date !== undefined || payload.time !== undefined || payload.completed !== undefined) {
+				return jsonResponse({ success: false, message: 'Invalid reminder snooze request.' }, 400);
+			}
+			const [result]: any = await pool.execute(
+				`UPDATE reminders
+				 SET scheduled_at = DATE_ADD(NOW(), INTERVAL 1 HOUR),
+				     is_completed = 0, completed_at = NULL
+				 WHERE id = ? AND user_id = ?`,
+				[reminderId, userId]
+			);
+			if (result.affectedRows !== 1 && !await ownsReminder(reminderId, userId)) {
+				return jsonResponse({ success: false, message: 'Reminder not found.' }, 404);
+			}
+			const [rows]: any = await pool.execute(
+				`SELECT DATE_FORMAT(scheduled_at, '%Y-%m-%d') AS date,
+				        TIME_FORMAT(scheduled_at, '%H:%i') AS time
+				 FROM reminders WHERE id = ? AND user_id = ?`,
+				[reminderId, userId]
+			);
+			return jsonResponse({ success: true, date: rows[0].date, time: rows[0].time });
 		}
 
 		if (typeof payload.completed === 'boolean' &&

@@ -25,17 +25,9 @@ export const POST: APIRoute = async ({ request }) => {
     const { randomBytes } = await import('crypto');
     const token = randomBytes(20).toString('hex');
 
-    // 3. Set expiration timestamp to 1 hour from now
-    const expires = new Date();
-    expires.setHours(expires.getHours() + 1);
-    
-    // Format date for MySQL compatibility (YYYY-MM-DD HH:MM:SS)
-    const mysqlExpires = expires.toISOString().slice(0, 19).replace('T', ' ');
-
-    // 4. Update the user row in the database
     await pool.execute(
-      'UPDATE users SET reset_token = ?, reset_expires = ? WHERE email = ?',
-      [token, mysqlExpires, email]
+      'UPDATE users SET reset_token = ?, reset_expires = DATE_ADD(NOW(), INTERVAL 1 HOUR) WHERE email = ?',
+      [token, email]
     );
 
     // 🌟 DEVELOPER LOG: Because we don't have an email server, we print the link here!

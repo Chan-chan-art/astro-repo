@@ -1,6 +1,7 @@
 // src/pages/change-password-api.ts
 import type { APIRoute } from 'astro';
 import { pool } from '../lib/db';
+import { hashPassword, verifyPassword } from '../lib/password';
 
 export const prerender = false;
 
@@ -8,10 +9,16 @@ export const POST: APIRoute = async ({ request, cookies }) => {
   try {
     // 1. Identify which user is logged in via their cookie session status
     const sessionCookie = cookies.get("user_session");
-    if (!sessionCookie) {
+    let sessionData: { username?: string } | null = null;
+    try {
+      sessionData = sessionCookie?.json() ?? null;
+    } catch {
       return new Response(JSON.stringify({ success: false, message: "Unauthorized session state." }), { status: 401 });
     }
-    const username = sessionCookie.value;
+    if (!sessionData?.username) {
+      return new Response(JSON.stringify({ success: false, message: "Unauthorized session state." }), { status: 401 });
+    }
+    const username = sessionData.username;
 
     const data = await request.formData();
     const currentPassword = data.get("currentPassword")?.toString();
@@ -37,16 +44,11 @@ export const POST: APIRoute = async ({ request, cookies }) => {
 
     const dbUser = rows[0];
 
-    // 3. Encrypt the typed CURRENT password to verify authority ownership
-    const { createHash } = await import('crypto');
-    const currentInputHash = createHash('sha256').update(currentPassword).digest('hex');
-
-    if (dbUser.password !== currentInputHash) {
+    if (!verifyPassword(currentPassword, dbUser.password)) {
       return new Response(JSON.stringify({ success: false, message: "Current password input is incorrect." }), { status: 401 });
     }
 
-    // 4. Encrypt and save the newly selected password string choice securely
-    const newPasswordHash = createHash('sha256').update(newPassword).digest('hex');
+    const newPasswordHash = hashPassword(newPassword);
 
     await pool.execute(
       'UPDATE users SET password = ? WHERE BINARY username = ?',

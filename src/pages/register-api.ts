@@ -1,15 +1,8 @@
 import type { APIRoute } from 'astro';
 import { pool } from '../lib/db';
-import crypto from 'node:crypto'; // Native, built-in Node.js module
+import { hashPassword } from '../lib/password';
 
 export const prerender = false;
-
-// Secure hashing helper using native Node.js crypto
-function hashPasswordNative(password: string): string {
-  const salt = crypto.randomBytes(16).toString('hex');
-  const hash = crypto.scryptSync(password, salt, 64).toString('hex');
-  return `${salt}:${hash}`;
-}
 
 export const POST: APIRoute = async ({ request, cookies }) => {
   try {
@@ -41,7 +34,7 @@ export const POST: APIRoute = async ({ request, cookies }) => {
     }
 
     // 3. Hash securely using native scrypt
-    const secureHashedPassword = hashPasswordNative(password);
+    const secureHashedPassword = hashPassword(password);
 
     // 4. Generate a unique placeholder email to bypass the database constraint
     const placeholderEmail = `${username}_${Date.now()}@local.dev`;

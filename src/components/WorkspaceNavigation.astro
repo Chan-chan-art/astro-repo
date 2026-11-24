@@ -11,14 +11,24 @@ const { currentPage, currentSection, showPreferences = true, showLogout = true }
 
 <nav class="workspace-navigation" aria-label="Workspace navigation">
 	<h2>Workspace Navigation</h2>
+	<button
+		type="button"
+		class="workspace-command-trigger"
+		data-open-workspace-palette
+		aria-haspopup="dialog"
+		aria-controls="workspaceCommandPalette"
+	>
+		<span>Quick jump</span>
+		<kbd>Ctrl K / ⌘ K</kbd>
+	</button>
 	<div class="workspace-navigation-links">
 		<a href="/dashboard" aria-current={currentPage === "dashboard" && !currentSection ? "page" : undefined}><span class="workspace-navigation-icon" aria-hidden="true">🏠</span>Dashboard</a>
-		<a href="/dashboard?view=notes" aria-current={currentSection === "notes" ? "page" : undefined}><span class="workspace-navigation-icon" aria-hidden="true">📝</span>My Notes</a>
-		<a href="/dashboard?view=favorites" aria-current={currentSection === "favorites" ? "page" : undefined}><span class="workspace-navigation-icon" aria-hidden="true">⭐</span>Favorites</a>
-		<a href="/dashboard?view=pinned" aria-current={currentSection === "pinned" ? "page" : undefined}><span class="workspace-navigation-icon" aria-hidden="true">📌</span>Pinned Notes</a>
-		<a href="/calendar" aria-current={currentPage === "calendar" ? "page" : undefined}><span class="workspace-navigation-icon" aria-hidden="true">📅</span>Calendar</a>
-		<a href="/reminders" aria-current={currentPage === "reminders" ? "page" : undefined}><span class="workspace-navigation-icon" aria-hidden="true">⏰</span>Reminders</a>
-		<a href="/dashboard?view=trash" aria-current={currentSection === "trash" ? "page" : undefined}><span class="workspace-navigation-icon" aria-hidden="true">🗑️</span>Trash</a>
+		<a href="/dashboard#notes" aria-current={currentSection === "notes" ? "page" : undefined}><span class="workspace-navigation-icon" aria-hidden="true">📝</span>My Notes</a>
+		<a href="/dashboard#favorites" aria-current={currentSection === "favorites" ? "page" : undefined}><span class="workspace-navigation-icon" aria-hidden="true">⭐</span>Favorites<span class="workspace-navigation-count" data-workspace-count="favorites" aria-label="0 favorites" hidden>0</span></a>
+		<a href="/dashboard#pinned" aria-current={currentSection === "pinned" ? "page" : undefined}><span class="workspace-navigation-icon" aria-hidden="true">📌</span>Pinned Notes<span class="workspace-navigation-count" data-workspace-count="pinned" aria-label="0 pinned notes" hidden>0</span></a>
+		<a href="/calendar#calendar" aria-current={currentPage === "calendar" ? "page" : undefined}><span class="workspace-navigation-icon" aria-hidden="true">📅</span>Calendar</a>
+		<a href="/reminders#reminders" aria-current={currentPage === "reminders" ? "page" : undefined}><span class="workspace-navigation-icon" aria-hidden="true">⏰</span>Reminders<span class="workspace-navigation-count" data-workspace-count="remindersToday" aria-label="0 reminders due today" hidden>0</span></a>
+		<a href="/dashboard?view=trash#trash" aria-current={currentSection === "trash" ? "page" : undefined}><span class="workspace-navigation-icon" aria-hidden="true">🗑️</span>Trash</a>
 	</div>
 
 	{showPreferences && (
@@ -39,17 +49,255 @@ const { currentPage, currentSection, showPreferences = true, showLogout = true }
 	)}
 </nav>
 
+<dialog id="workspaceCommandPalette" class="workspace-command-palette" aria-labelledby="workspaceCommandHeading">
+	<div class="workspace-command-content">
+		<header class="workspace-command-header">
+			<div>
+				<h2 id="workspaceCommandHeading">Quick jump</h2>
+				<p>Jump to a view, filter by category, or search note titles.</p>
+			</div>
+			<button type="button" data-close-workspace-palette aria-label="Close quick jump">Close</button>
+		</header>
+
+		<label for="workspaceCommandSearch">Search note titles</label>
+		<input
+			id="workspaceCommandSearch"
+			type="search"
+			maxlength="80"
+			placeholder="Type a note title..."
+			autocomplete="off"
+		/>
+		<p class="workspace-command-status" id="workspaceCommandStatus" role="status" aria-live="polite">
+			Type to search notes you can access.
+		</p>
+		<ul class="workspace-command-results" id="workspaceCommandResults"></ul>
+
+		<section class="workspace-command-section" aria-labelledby="workspaceCommandViewsHeading">
+			<h3 id="workspaceCommandViewsHeading">Go to</h3>
+			<div class="workspace-command-links">
+				<a href="/dashboard">Dashboard</a>
+				<a href="/dashboard#notes">My Notes</a>
+				<a href="/dashboard#favorites">Favorites</a>
+				<a href="/dashboard#pinned">Pinned Notes</a>
+				<a href="/calendar#calendar">Calendar</a>
+				<a href="/reminders#reminders">Reminders</a>
+				<a href="/dashboard?view=trash#trash">Trash</a>
+			</div>
+		</section>
+
+		<section class="workspace-command-section" aria-labelledby="workspaceCommandCategoriesHeading">
+			<h3 id="workspaceCommandCategoriesHeading">Filter by category</h3>
+			<div class="workspace-command-links">
+				<a href="/dashboard?view=notes&amp;filter=General#notes">📁 General</a>
+				<a href="/dashboard?view=notes&amp;filter=Work#notes">💼 Work</a>
+				<a href="/dashboard?view=notes&amp;filter=Personal#notes">🏠 Personal</a>
+				<a href="/dashboard?view=notes&amp;filter=Ideas#notes">💡 Ideas</a>
+			</div>
+		</section>
+	</div>
+</dialog>
+
 <script>
 	const colorSchemeQuery = window.matchMedia("(prefers-color-scheme: dark)");
 	const root = document.documentElement;
 	const themeToggle = document.querySelector<HTMLInputElement>("[data-workspace-theme-toggle]");
 	const themeStatus = document.querySelector<HTMLElement>("[data-workspace-theme-status]");
+	const navigationLinks = Array.from(
+		document.querySelectorAll<HTMLAnchorElement>(".workspace-navigation-links a")
+	);
+	const countElements = Array.from(
+		document.querySelectorAll<HTMLElement>("[data-workspace-count]")
+	);
+	const commandPalette = document.getElementById("workspaceCommandPalette") as HTMLDialogElement | null;
+	const commandPaletteTrigger = document.querySelector<HTMLButtonElement>("[data-open-workspace-palette]");
+	const commandPaletteSearch = document.getElementById("workspaceCommandSearch") as HTMLInputElement | null;
+	const commandPaletteStatus = document.getElementById("workspaceCommandStatus");
+	const commandPaletteResults = document.getElementById("workspaceCommandResults");
+	const serverCurrentLink = navigationLinks.find((link) => link.getAttribute("aria-current") === "page");
+	const pendingCountDeltas = new Map<string, number>();
+	let workspaceCountsLoaded = false;
+	let commandSearchTimer = 0;
+	let commandSearchRequestId = 0;
+	let commandSearchController: AbortController | null = null;
+
+	function setWorkspaceCount(key: string, count: number) {
+		const badge = countElements.find((element) => element.dataset.workspaceCount === key);
+		if (!badge) return;
+		const safeCount = Math.max(0, count);
+		badge.dataset.count = String(safeCount);
+		badge.textContent = safeCount > 99 ? "99+" : String(safeCount);
+		badge.hidden = safeCount === 0;
+		badge.setAttribute("aria-label", key === "remindersToday"
+			? `${safeCount} reminders due today`
+			: `${safeCount} ${key === "favorites" ? "favorites" : "pinned notes"}`);
+	}
+
+	function localDateKey() {
+		const today = new Date();
+		return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+	}
+
+	async function loadWorkspaceCounts() {
+		try {
+			const response = await fetch(`/workspace-counts-api?today=${encodeURIComponent(localDateKey())}`);
+			const data = await response.json();
+			if (!response.ok || !data.success || !data.counts) {
+				throw new Error(data.message || "Unable to load workspace counts.");
+			}
+			for (const [key, count] of Object.entries(data.counts)) {
+				const delta = pendingCountDeltas.get(key) || 0;
+				setWorkspaceCount(key, Number(count) + delta);
+			}
+			workspaceCountsLoaded = true;
+			pendingCountDeltas.clear();
+		} catch (error) {
+			console.error("Workspace sidebar counts error:", error);
+		}
+	}
+
+	window.addEventListener("workspace-count-change", (event) => {
+		const detail = (event as CustomEvent<{ key?: string; delta?: number }>).detail;
+		if (!detail || typeof detail.key !== "string" || !Number.isFinite(detail.delta)) return;
+		const badge = countElements.find((element) => element.dataset.workspaceCount === detail.key);
+		if (!badge) return;
+		if (!workspaceCountsLoaded) {
+			pendingCountDeltas.set(detail.key, (pendingCountDeltas.get(detail.key) || 0) + Number(detail.delta));
+			return;
+		}
+		setWorkspaceCount(detail.key, Number(badge.dataset.count || 0) + Number(detail.delta));
+	});
+
+	void loadWorkspaceCounts();
+
+	function resetCommandSearch() {
+		window.clearTimeout(commandSearchTimer);
+		commandSearchController?.abort();
+		commandSearchController = null;
+		commandSearchRequestId++;
+		commandPaletteResults?.replaceChildren();
+		if (commandPaletteSearch) commandPaletteSearch.value = "";
+		if (commandPaletteStatus) commandPaletteStatus.textContent = "Type to search notes you can access.";
+	}
+
+	async function searchWorkspaceNoteTitles() {
+		const query = commandPaletteSearch?.value.trim() || "";
+		const requestId = ++commandSearchRequestId;
+		commandSearchController?.abort();
+		commandSearchController = null;
+		commandPaletteResults?.replaceChildren();
+		if (!query) {
+			if (commandPaletteStatus) commandPaletteStatus.textContent = "Type to search notes you can access.";
+			return;
+		}
+
+		if (commandPaletteStatus) commandPaletteStatus.textContent = "Searching note titles...";
+		const controller = new AbortController();
+		commandSearchController = controller;
+		try {
+			const response = await fetch(`/workspace-search-api?q=${encodeURIComponent(query)}`, {
+				signal: controller.signal
+			});
+			const data = await response.json();
+			if (!response.ok || !data.success || !Array.isArray(data.notes)) {
+				throw new Error(data.message || "Unable to search workspace notes.");
+			}
+			if (requestId !== commandSearchRequestId) return;
+
+			if (data.notes.length === 0) {
+				if (commandPaletteStatus) commandPaletteStatus.textContent = "No matching note titles.";
+				return;
+			}
+
+			if (commandPaletteStatus) {
+				commandPaletteStatus.textContent = `${data.notes.length} matching note${data.notes.length === 1 ? "" : "s"}.`;
+			}
+			for (const note of data.notes) {
+				if ((typeof note?.id !== "number" && typeof note?.id !== "string") ||
+					typeof note.title !== "string" || typeof note.category !== "string") continue;
+				const result = document.createElement("a");
+				result.className = "workspace-command-result";
+				result.href = `/dashboard?view=notes#note-${encodeURIComponent(String(note.id))}`;
+				const title = document.createElement("span");
+				title.className = "workspace-command-result-title";
+				title.textContent = note.title;
+				const category = document.createElement("span");
+				category.className = "workspace-command-result-category";
+				category.textContent = note.category;
+				result.append(title, category);
+				const item = document.createElement("li");
+				item.append(result);
+				commandPaletteResults?.append(item);
+			}
+		} catch (error) {
+			if (error instanceof DOMException && error.name === "AbortError") return;
+			console.error("Workspace command palette note search error:", error);
+			if (requestId === commandSearchRequestId && commandPaletteStatus) {
+				commandPaletteStatus.textContent = error instanceof Error
+					? error.message
+					: "Unable to search workspace notes.";
+			}
+		}
+	}
+
+	function openWorkspaceCommandPalette() {
+		if (!commandPalette) return;
+		if (!commandPalette.open) commandPalette.showModal();
+		resetCommandSearch();
+		commandPaletteSearch?.focus();
+	}
+
+	commandPaletteTrigger?.addEventListener("click", openWorkspaceCommandPalette);
+	commandPalette?.querySelector("[data-close-workspace-palette]")?.addEventListener("click", () => {
+		commandPalette.close();
+	});
+	commandPalette?.addEventListener("click", (event) => {
+		if (event.target === commandPalette) commandPalette.close();
+	});
+	commandPalette?.addEventListener("close", resetCommandSearch);
+	commandPaletteSearch?.addEventListener("input", () => {
+		window.clearTimeout(commandSearchTimer);
+		commandSearchTimer = window.setTimeout(() => void searchWorkspaceNoteTitles(), 120);
+	});
+	document.addEventListener("keydown", (event) => {
+		if (event.key === "Escape" && commandPalette?.open) {
+			event.preventDefault();
+			commandPalette.close();
+			return;
+		}
+		if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
+			event.preventDefault();
+			if (commandPalette?.open) commandPalette.close();
+			else openWorkspaceCommandPalette();
+		}
+	});
+
+	function syncWorkspaceNavigationHash() {
+		if (!window.location.hash) {
+			for (const link of navigationLinks) {
+				if (link === serverCurrentLink) link.setAttribute("aria-current", "page");
+				else link.removeAttribute("aria-current");
+			}
+			return;
+		}
+		const activeLink = navigationLinks.find((link) => {
+			const target = new URL(link.href);
+			return target.pathname === window.location.pathname && target.hash === window.location.hash;
+		});
+		if (!activeLink) return;
+
+		for (const link of navigationLinks) {
+			if (link === activeLink) link.setAttribute("aria-current", "page");
+			else link.removeAttribute("aria-current");
+		}
+	}
 
 	function syncWorkspaceThemeToggle() {
 		if (themeToggle) themeToggle.checked = root.dataset.theme === "dark";
 	}
 
 	syncWorkspaceThemeToggle();
+	syncWorkspaceNavigationHash();
+	window.addEventListener("hashchange", syncWorkspaceNavigationHash);
 
 	themeToggle?.addEventListener("change", () => {
 		const preference = themeToggle.checked ? "dark" : "light";
@@ -85,6 +333,174 @@ const { currentPage, currentSection, showPreferences = true, showLogout = true }
 		text-align: left;
 	}
 
+	.workspace-command-trigger {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 8px;
+		width: 100%;
+		margin: 0 0 10px;
+		padding: 9px 11px;
+		border: 1px solid var(--dashboard-border, rgba(255, 255, 255, 0.18));
+		border-radius: 11px;
+		background: var(--dashboard-surface-soft, rgba(255, 255, 255, 0.08));
+		color: var(--dashboard-text, #fff);
+		font: inherit;
+		font-size: 12px;
+		cursor: pointer;
+	}
+
+	.workspace-command-trigger:hover {
+		background: var(--dashboard-surface-hover, rgba(255, 255, 255, 0.18));
+	}
+
+	.workspace-command-trigger kbd {
+		color: var(--dashboard-muted, rgba(255, 255, 255, 0.7));
+		font: inherit;
+		font-size: 10px;
+	}
+
+	.workspace-command-palette {
+		width: min(620px, calc(100vw - 28px));
+		max-width: calc(100vw - 28px);
+		max-height: min(82vh, 720px);
+		padding: 0;
+		overflow: hidden;
+		border: 1px solid var(--dashboard-border, rgba(255, 255, 255, 0.2));
+		border-radius: 20px;
+		background: var(--dashboard-surface, #262044);
+		color: var(--dashboard-text, #fff);
+		box-shadow: 0 24px 70px rgba(0, 0, 0, 0.4);
+	}
+
+	.workspace-command-palette::backdrop {
+		background: rgba(8, 8, 20, 0.68);
+		backdrop-filter: blur(5px);
+	}
+
+	.workspace-command-content {
+		display: grid;
+		gap: 16px;
+		max-height: min(82vh, 720px);
+		padding: 20px;
+		overflow-y: auto;
+	}
+
+	.workspace-command-header {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 12px;
+	}
+
+	.workspace-command-header h2 {
+		margin: 0;
+		font-size: 20px;
+	}
+
+	.workspace-command-header p {
+		margin: 5px 0 0;
+		color: var(--dashboard-muted, rgba(255, 255, 255, 0.72));
+		font-size: 12px;
+	}
+
+	.workspace-command-palette button,
+	.workspace-command-palette input {
+		min-width: 0;
+		padding: 9px 11px;
+		border: 1px solid var(--dashboard-border, rgba(255, 255, 255, 0.2));
+		border-radius: 10px;
+		background: var(--dashboard-surface-soft, rgba(255, 255, 255, 0.08));
+		color: var(--dashboard-text, #fff);
+		font: inherit;
+		font-size: 12px;
+	}
+
+	.workspace-command-palette button { cursor: pointer; }
+
+	.workspace-command-palette button:hover,
+	.workspace-command-links a:hover,
+	:global(.workspace-command-result:hover) {
+		background: var(--dashboard-surface-hover, rgba(255, 255, 255, 0.18));
+	}
+
+	.workspace-command-palette label,
+	.workspace-command-section h3 {
+		margin: 0;
+		font-size: 12px;
+		font-weight: 700;
+	}
+
+	.workspace-command-palette input {
+		width: 100%;
+		font-size: 14px;
+	}
+
+	.workspace-command-palette input:focus-visible,
+	.workspace-command-palette button:focus-visible,
+	.workspace-command-links a:focus-visible,
+	:global(.workspace-command-result:focus-visible) {
+		outline: 2px solid #c4b5fd;
+		outline-offset: 2px;
+	}
+
+	.workspace-command-status {
+		margin: -7px 0 0;
+		color: var(--dashboard-muted, rgba(255, 255, 255, 0.72));
+		font-size: 11px;
+	}
+
+	.workspace-command-results {
+		display: grid;
+		gap: 6px;
+		margin: -9px 0 0;
+		padding: 0;
+		list-style: none;
+	}
+
+	.workspace-command-results:empty { display: none; }
+
+	.workspace-command-section {
+		display: grid;
+		gap: 8px;
+	}
+
+	.workspace-command-links {
+		display: grid;
+		grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+		gap: 6px;
+	}
+
+	.workspace-command-links a,
+	:global(.workspace-command-result) {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 10px;
+		min-width: 0;
+		padding: 9px 11px;
+		border: 1px solid var(--dashboard-border, rgba(255, 255, 255, 0.16));
+		border-radius: 10px;
+		background: var(--dashboard-surface-soft, rgba(255, 255, 255, 0.06));
+		color: var(--dashboard-text, #fff);
+		font-size: 12px;
+		text-decoration: none;
+		overflow-wrap: anywhere;
+		transition: background-color 0.15s ease;
+	}
+
+	:global(.workspace-command-result-title) {
+		min-width: 0;
+		font-weight: 600;
+		overflow-wrap: anywhere;
+	}
+
+	:global(.workspace-command-result-category) {
+		flex: 0 0 auto;
+		color: var(--dashboard-muted, rgba(255, 255, 255, 0.68));
+		font-size: 10px;
+	}
+
 	.workspace-navigation-links {
 		display: grid;
 		gap: 6px;
@@ -110,6 +526,19 @@ const { currentPage, currentSection, showPreferences = true, showLogout = true }
 	.workspace-navigation-icon {
 		display: inline-block;
 		width: 1.8em;
+		text-align: center;
+	}
+
+	.workspace-navigation-count {
+		float: right;
+		min-width: 20px;
+		margin-left: 8px;
+		padding: 2px 6px;
+		border-radius: 999px;
+		background: rgba(255, 255, 255, 0.18);
+		color: inherit;
+		font-size: 10px;
+		font-weight: 700;
 		text-align: center;
 	}
 

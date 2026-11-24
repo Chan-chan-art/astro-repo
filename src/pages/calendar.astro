@@ -333,6 +333,29 @@ const bio = userRows[0].bio || "";
 				font-size: 11px;
 			}
 
+			.selected-reminder .calendar-reminder-due-pill {
+				display: inline-flex;
+				width: fit-content;
+				padding: 5px 9px;
+				border: 1px solid rgba(203, 213, 225, 0.3);
+				border-radius: 999px;
+				background: rgba(148, 163, 184, 0.16);
+				color: #e2e8f0;
+				font-weight: 600;
+			}
+
+			.selected-reminder .calendar-reminder-due-pill.overdue {
+				border-color: rgba(248, 113, 113, 0.45);
+				background: rgba(239, 68, 68, 0.18);
+				color: #fee2e2;
+			}
+
+			.selected-reminder .calendar-reminder-due-pill.today {
+				border-color: rgba(251, 191, 36, 0.48);
+				background: rgba(245, 158, 11, 0.2);
+				color: #fef3c7;
+			}
+
 			.selected-reminder-status {
 				display: inline-block;
 				margin-top: 8px;
@@ -366,6 +389,11 @@ const bio = userRows[0].bio || "";
 			.selected-reminder-actions .delete-reminder {
 				border-color: rgba(255, 170, 170, 0.4);
 				background: rgba(255, 118, 117, 0.18);
+			}
+
+			.selected-reminder-actions .snooze-reminder {
+				border-color: rgba(251, 191, 36, 0.38);
+				background: rgba(245, 158, 11, 0.12);
 			}
 
 			:root[data-theme="dark"] .selected-reminder-status.is-pending {
@@ -607,6 +635,18 @@ const bio = userRows[0].bio || "";
 				return dateKey(date) === value ? date : null;
 			}
 
+			function announceTodayCountChange(delta: number) {
+				if (delta !== 0) {
+					window.dispatchEvent(new CustomEvent("workspace-count-change", {
+						detail: { key: "remindersToday", delta }
+					}));
+				}
+			}
+
+			function isDueToday(reminder: Reminder, date = reminder.date, completed = Boolean(Number(reminder.completed))) {
+				return !completed && date === dateKey(new Date());
+			}
+
 			function setStatus(message: string, isError = false) {
 				calendarStatus.textContent = message;
 				calendarStatus.classList.toggle("error", isError);
@@ -641,12 +681,21 @@ const bio = userRows[0].bio || "";
 					content.className = "selected-reminder-main";
 					const title = document.createElement("strong");
 					title.textContent = reminder.title;
+					const completed = Boolean(Number(reminder.completed));
 					const time = document.createElement("time");
 					time.dateTime = `${reminder.date}T${reminder.time}`;
-					time.textContent = new Date(`${reminder.date}T${reminder.time}:00`).toLocaleTimeString(undefined, {
+					const scheduled = new Date(`${reminder.date}T${reminder.time}:00`);
+					const dueStatus = completed ? "completed"
+						: scheduled.getTime() < Date.now() ? "overdue"
+							: reminder.date === dateKey(new Date()) ? "today" : "upcoming";
+					const statusLabel = dueStatus === "completed" ? "Completed"
+						: dueStatus === "overdue" ? "Overdue"
+							: dueStatus === "today" ? "Today" : "Upcoming";
+					time.className = `calendar-reminder-due-pill ${dueStatus}`;
+					time.textContent = `${statusLabel} · ${scheduled.toLocaleString(undefined, {
 						hour: "numeric", minute: "2-digit"
-					});
-					const completed = Boolean(Number(reminder.completed));
+					})}`;
+					time.setAttribute("aria-label", `${statusLabel}: ${scheduled.toLocaleString()}`);
 					const status = document.createElement("span");
 					status.className = `selected-reminder-status ${completed ? "is-completed" : "is-pending"}`;
 					status.textContent = completed ? "Completed" : "Not completed";
@@ -657,10 +706,21 @@ const bio = userRows[0].bio || "";
 					actions.className = "selected-reminder-actions";
 					const completionButton = document.createElement("button");
 					completionButton.type = "button";
-					completionButton.textContent = completed ? "Restore" : "Complete";
+					completionButton.textContent = completed ? "Restore" : "✓";
+					completionButton.setAttribute("aria-label", `${completed ? "Restore" : "Complete"} ${reminder.title}`);
 					completionButton.addEventListener("click", () => {
 						void setReminderCompleted(reminder, !completed, completionButton);
 					});
+					actions.append(completionButton);
+					if (!completed && (dueStatus === "today" || dueStatus === "overdue")) {
+						const snoozeButton = document.createElement("button");
+						snoozeButton.type = "button";
+						snoozeButton.className = "snooze-reminder";
+						snoozeButton.textContent = "Snooze 1h";
+						snoozeButton.setAttribute("aria-label", `Snooze ${reminder.title} for one hour`);
+						snoozeButton.addEventListener("click", () => void snoozeReminder(reminder, snoozeButton));
+						actions.append(snoozeButton);
+					}
 					const editButton = document.createElement("button");
 					editButton.type = "button";
 					editButton.textContent = "Edit";
@@ -670,7 +730,7 @@ const bio = userRows[0].bio || "";
 					deleteButton.className = "delete-reminder";
 					deleteButton.textContent = "Delete";
 					deleteButton.addEventListener("click", () => void deleteReminder(reminder, deleteButton));
-					actions.append(completionButton, editButton, deleteButton);
+					actions.append(editButton, deleteButton);
 					item.append(content, actions);
 					reminderList.append(item);
 				}
@@ -698,6 +758,7 @@ const bio = userRows[0].bio || "";
 					});
 					const data = await response.json();
 					if (!response.ok || !data.success) throw new Error(data.message || "Unable to delete reminder.");
+					if (isDueToday(reminder)) announceTodayCountChange(-1);
 					if (editingReminderId === String(reminder.id)) closeReminderForm();
 					setStatus("Reminder deleted.");
 					await loadCalendarReminders();
@@ -725,11 +786,35 @@ const bio = userRows[0].bio || "";
 					if (!response.ok || !data.success) {
 						throw new Error(data.message || "Unable to update reminder.");
 					}
+					announceTodayCountChange(Number(isDueToday(reminder, reminder.date, completed)) - Number(isDueToday(reminder)));
 					setStatus(completed ? "Reminder completed." : "Reminder restored.");
 					await loadCalendarReminders();
 				} catch (error) {
 					console.error("Calendar reminder completion update error:", error);
 					setStatus(error instanceof Error ? error.message : "Unable to update reminder.", true);
+				} finally {
+					button.disabled = false;
+				}
+			}
+
+			async function snoozeReminder(reminder: Reminder, button: HTMLButtonElement) {
+				button.disabled = true;
+				try {
+					const response = await fetch(`/reminders-api?id=${encodeURIComponent(String(reminder.id))}`, {
+						method: "PUT",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({ snoozeMinutes: 60 })
+					});
+					const data = await response.json();
+					if (!response.ok || !data.success || typeof data.date !== "string") {
+						throw new Error(data.message || "Unable to snooze reminder.");
+					}
+					announceTodayCountChange(Number(isDueToday(reminder, data.date, false)) - Number(isDueToday(reminder)));
+					setStatus("Reminder snoozed for one hour.");
+					await loadCalendarReminders();
+				} catch (error) {
+					console.error("Calendar reminder snooze error:", error);
+					setStatus(error instanceof Error ? error.message : "Unable to snooze reminder.", true);
 				} finally {
 					button.disabled = false;
 				}
@@ -845,6 +930,10 @@ const bio = userRows[0].bio || "";
 				const formData = new FormData(calendarForm);
 				const submitButton = calendarForm.querySelector<HTMLButtonElement>('button[type="submit"]');
 				const reminderId = editingReminderId;
+				const previousReminder = reminders.find((reminder) => String(reminder.id) === reminderId);
+				const wasDueToday = previousReminder ? isDueToday(previousReminder) : false;
+				const willBeDueToday = !editingReminderCompleted &&
+					String(formData.get("date")) === dateKey(new Date());
 				const payload = {
 					title: formData.get("title"),
 					description: formData.get("description"),
@@ -864,6 +953,7 @@ const bio = userRows[0].bio || "";
 					);
 					const data = await response.json();
 					if (!response.ok || !data.success) throw new Error(data.message || "Unable to save reminder.");
+					announceTodayCountChange(Number(willBeDueToday) - Number(wasDueToday));
 					selectedDate = parseDateKey(String(formData.get("date"))) || selectedDate;
 					visibleMonth = new Date(selectedDate.getFullYear(), selectedDate.getMonth(), 1);
 					closeReminderForm();

@@ -261,38 +261,68 @@ const bio = userRows[0].bio || "";
 
 			.reminder-status.error { color: #ffb4b4; }
 
-			.reminder-section { margin-top: 24px; }
+			.reminder-section {
+				margin-top: 20px;
+				padding: 16px;
+				border: 1px solid var(--page-border);
+				border-radius: 17px;
+				background: var(--page-surface-soft);
+			}
 
 			.reminder-section h3 {
 				display: flex;
 				align-items: center;
-				gap: 8px;
-				margin: 0 0 12px;
-				font-size: 16px;
+				justify-content: space-between;
+				gap: 12px;
+				margin: 0 0 14px;
+				padding-bottom: 11px;
+				border-bottom: 1px solid var(--page-border);
+				font-size: 15px;
 			}
 
 			.reminder-section h3 span {
 				display: inline-grid;
 				place-items: center;
-				min-width: 22px;
-				height: 22px;
-				padding: 0 5px;
+				min-width: 28px;
+				height: 26px;
+				margin-left: auto;
+				padding: 0 8px;
 				border-radius: 999px;
-				background: rgba(255, 255, 255, 0.15);
-				font-size: 10px;
+				font-size: 11px;
+				font-weight: 700;
+				font-variant-numeric: tabular-nums;
+			}
+
+			.reminder-section-upcoming h3 span {
+				border: 1px solid rgba(203, 213, 225, 0.3);
+				background: rgba(148, 163, 184, 0.16);
+				color: #e2e8f0;
+			}
+
+			.reminder-section-overdue h3 span {
+				border: 1px solid rgba(248, 113, 113, 0.42);
+				background: rgba(239, 68, 68, 0.16);
+				color: #fee2e2;
+			}
+
+			.reminder-section-completed h3 span {
+				border: 1px solid rgba(251, 191, 36, 0.42);
+				background: rgba(245, 158, 11, 0.18);
+				color: #fef3c7;
 			}
 
 			.reminder-list {
 				display: grid;
-				gap: 10px;
+				gap: 12px;
+				margin: 0;
 				padding: 0;
 				list-style: none;
 			}
 
-			.reminder-item {
-				display: flex;
-				align-items: flex-start;
-				justify-content: space-between;
+			:global(.reminder-item) {
+				display: grid;
+				grid-template-columns: minmax(0, 1fr) auto;
+				align-items: center;
 				gap: 14px;
 				padding: 14px;
 				border: 1px solid var(--page-border);
@@ -300,15 +330,15 @@ const bio = userRows[0].bio || "";
 				background: var(--page-surface-soft);
 			}
 
-			.reminder-item-main { min-width: 0; }
+			:global(.reminder-item-main) { min-width: 0; }
 
-			.reminder-item-main strong {
+			:global(.reminder-item-main strong) {
 				display: block;
 				font-size: 13px;
 				overflow-wrap: anywhere;
 			}
 
-			.reminder-item-main p {
+			:global(.reminder-item-main p) {
 				margin: 6px 0 0;
 				color: var(--page-muted);
 				font-size: 12px;
@@ -316,14 +346,39 @@ const bio = userRows[0].bio || "";
 				overflow-wrap: anywhere;
 			}
 
-			.reminder-item-main time {
-				display: block;
+			:global(.reminder-item-main time) {
+				display: inline-flex;
+				align-items: center;
 				margin-top: 7px;
-				color: var(--page-muted);
+				padding: 5px 9px;
+				border: 1px solid rgba(203, 213, 225, 0.3);
+				border-radius: 999px;
+				background: rgba(148, 163, 184, 0.16);
+				color: #e2e8f0;
 				font-size: 11px;
+				font-weight: 600;
 			}
 
-			.reminder-note-link {
+			:global(.reminder-item-main .reminder-due-pill.overdue) {
+				border-color: rgba(248, 113, 113, 0.45);
+				background: rgba(239, 68, 68, 0.18);
+				color: #fee2e2;
+			}
+
+			:global(.reminder-item-main .reminder-due-pill.today) {
+				border-color: rgba(251, 191, 36, 0.48);
+				background: rgba(245, 158, 11, 0.2);
+				color: #fef3c7;
+			}
+
+			:global(.reminder-item-main .reminder-due-pill.upcoming),
+			:global(.reminder-item-main .reminder-due-pill.completed) {
+				border-color: rgba(203, 213, 225, 0.3);
+				background: rgba(148, 163, 184, 0.16);
+				color: #e2e8f0;
+			}
+
+			:global(.reminder-note-link) {
 				display: inline-block;
 				margin-top: 8px;
 				color: #e2d5ff;
@@ -331,26 +386,50 @@ const bio = userRows[0].bio || "";
 				text-decoration: none;
 			}
 
-			.reminder-note-link:hover {
+			:global(.reminder-note-link:hover) {
 				text-decoration: underline;
 			}
 
-			.reminder-item-actions {
+			:global(.reminder-item-actions) {
 				display: flex;
 				flex: 0 0 auto;
+				align-items: center;
 				flex-wrap: wrap;
 				justify-content: flex-end;
-				gap: 6px;
+				gap: 8px;
 			}
 
-			.reminder-item-actions button {
+			:global(.reminder-item-actions button) {
+				min-width: 68px;
+				min-height: 34px;
 				padding: 7px 9px;
+				border: 1px solid var(--page-border);
+				border-radius: 11px;
+				background: var(--page-surface-soft);
+				color: var(--page-text);
+				font: inherit;
 				font-size: 10px;
+				cursor: pointer;
+				white-space: nowrap;
 			}
 
-			.reminder-item-actions .delete-reminder {
+			:global(.reminder-item-actions button:hover) {
+				background: rgba(255, 255, 255, 0.18);
+			}
+
+			:global(.reminder-item-actions button:disabled) {
+				cursor: wait;
+				opacity: 0.65;
+			}
+
+			:global(.reminder-item-actions .delete-reminder) {
 				border-color: rgba(255, 118, 117, 0.45);
 				background: rgba(255, 118, 117, 0.15);
+			}
+
+			:global(.reminder-item-actions .snooze-reminder) {
+				border-color: rgba(251, 191, 36, 0.38);
+				background: rgba(245, 158, 11, 0.12);
 			}
 
 			.reminder-empty {
@@ -386,8 +465,12 @@ const bio = userRows[0].bio || "";
 				.reminders-header { align-items: flex-start; flex-direction: column; }
 				.reminder-form { grid-template-columns: 1fr; }
 				.reminder-form .wide { grid-column: auto; }
-				.reminder-item { flex-direction: column; }
-				.reminder-item-actions { justify-content: flex-start; }
+				:global(.reminder-item) { grid-template-columns: minmax(0, 1fr); align-items: stretch; }
+				:global(.reminder-item-actions) {
+					display: grid;
+					grid-template-columns: repeat(auto-fit, minmax(80px, 1fr));
+					justify-content: stretch;
+				}
 				.notification-settings { align-items: flex-start; flex-direction: column; }
 			}
 		</style>
@@ -459,17 +542,17 @@ const bio = userRows[0].bio || "";
 					<p class="reminder-status" id="reminderStatus" role="status" aria-live="polite"></p>
 				</section>
 
-				<section class="reminder-section" aria-labelledby="upcomingHeading">
+				<section class="reminder-section reminder-section-upcoming" aria-labelledby="upcomingHeading">
 					<h3 id="upcomingHeading">Upcoming <span id="upcomingCount">0</span></h3>
 					<ul class="reminder-list" id="upcomingList"></ul>
 					<p class="reminder-empty" id="upcomingEmpty">No upcoming reminders.</p>
 				</section>
-				<section class="reminder-section" aria-labelledby="overdueHeading">
+				<section class="reminder-section reminder-section-overdue" aria-labelledby="overdueHeading">
 					<h3 id="overdueHeading">Overdue <span id="overdueCount">0</span></h3>
 					<ul class="reminder-list" id="overdueList"></ul>
 					<p class="reminder-empty" id="overdueEmpty">No overdue reminders.</p>
 				</section>
-				<section class="reminder-section" aria-labelledby="completedHeading">
+				<section class="reminder-section reminder-section-completed" aria-labelledby="completedHeading">
 					<h3 id="completedHeading">Completed <span id="completedCount">0</span></h3>
 					<ul class="reminder-list" id="completedList"></ul>
 					<p class="reminder-empty" id="completedEmpty">Completed reminders stay here as history.</p>
@@ -563,8 +646,23 @@ const bio = userRows[0].bio || "";
 				}
 				const time = document.createElement("time");
 				const date = scheduledDate(reminder);
+				const completed = Boolean(Number(reminder.completed));
+				const now = new Date();
+				const dueStatus = completed
+					? "completed"
+					: date.getTime() < now.getTime()
+						? "overdue"
+						: reminder.date === localDateKey(now) ? "today" : "upcoming";
+				const statusLabel = dueStatus === "completed" ? "Completed"
+					: dueStatus === "overdue" ? "Overdue"
+						: dueStatus === "today" ? "Today" : "Upcoming";
+				time.className = `reminder-due-pill ${dueStatus}`;
 				time.dateTime = `${reminder.date}T${reminder.time}`;
-				time.textContent = date.toLocaleString();
+				time.textContent = `${statusLabel} · ${date.toLocaleString()}`;
+				time.setAttribute(
+					"aria-label",
+					`${statusLabel}: ${date.toLocaleString()}`
+				);
 				main.append(time);
 
 				if (reminder.noteId && reminder.noteTitle) {
@@ -577,11 +675,21 @@ const bio = userRows[0].bio || "";
 
 				const actions = document.createElement("div");
 				actions.className = "reminder-item-actions";
-				const completed = Boolean(Number(reminder.completed));
 				const completionButton = document.createElement("button");
 				completionButton.type = "button";
-				completionButton.textContent = completed ? "Restore" : "Complete";
-				completionButton.addEventListener("click", () => void setReminderCompleted(reminder, !completed));
+				completionButton.textContent = completed ? "Restore" : "✓";
+				completionButton.setAttribute("aria-label", `${completed ? "Restore" : "Complete"} ${reminder.title}`);
+				completionButton.title = completed ? "Restore reminder" : "Complete reminder";
+				completionButton.addEventListener("click", () => void setReminderCompleted(reminder, !completed, completionButton));
+				if (!completed && (dueStatus === "today" || dueStatus === "overdue")) {
+					const snoozeButton = document.createElement("button");
+					snoozeButton.type = "button";
+					snoozeButton.className = "snooze-reminder";
+					snoozeButton.textContent = "Snooze 1h";
+					snoozeButton.setAttribute("aria-label", `Snooze ${reminder.title} for one hour`);
+					snoozeButton.addEventListener("click", () => void snoozeReminder(reminder, snoozeButton));
+					actions.append(snoozeButton);
+				}
 				const editButton = document.createElement("button");
 				editButton.type = "button";
 				editButton.textContent = "Edit";
@@ -642,7 +750,20 @@ const bio = userRows[0].bio || "";
 				}
 			}
 
-			async function setReminderCompleted(reminder: Reminder, completed: boolean) {
+			function announceTodayCountChange(delta: number) {
+				if (delta !== 0) {
+					window.dispatchEvent(new CustomEvent("workspace-count-change", {
+						detail: { key: "remindersToday", delta }
+					}));
+				}
+			}
+
+			function isDueToday(reminder: Reminder, date = reminder.date, completed = Boolean(Number(reminder.completed))) {
+				return !completed && date === localDateKey(new Date());
+			}
+
+			async function setReminderCompleted(reminder: Reminder, completed: boolean, button: HTMLButtonElement) {
+				button.disabled = true;
 				try {
 					const response = await fetch(`/reminders-api?id=${encodeURIComponent(String(reminder.id))}`, {
 						method: "PUT",
@@ -651,11 +772,37 @@ const bio = userRows[0].bio || "";
 					});
 					const data = await response.json();
 					if (!response.ok || !data.success) throw new Error(data.message || "Unable to update reminder.");
+					announceTodayCountChange(Number(isDueToday(reminder, reminder.date, completed)) - Number(isDueToday(reminder)));
 					setStatus(completed ? "Reminder completed." : "Reminder restored.");
 					await loadReminders();
 				} catch (error) {
 					console.error("Reminder completion update error:", error);
 					setStatus(error instanceof Error ? error.message : "Unable to update reminder.", true);
+				} finally {
+					button.disabled = false;
+				}
+			}
+
+			async function snoozeReminder(reminder: Reminder, button: HTMLButtonElement) {
+				button.disabled = true;
+				try {
+					const response = await fetch(`/reminders-api?id=${encodeURIComponent(String(reminder.id))}`, {
+						method: "PUT",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({ snoozeMinutes: 60 })
+					});
+					const data = await response.json();
+					if (!response.ok || !data.success || typeof data.date !== "string") {
+						throw new Error(data.message || "Unable to snooze reminder.");
+					}
+					announceTodayCountChange(Number(isDueToday(reminder, data.date, false)) - Number(isDueToday(reminder)));
+					setStatus("Reminder snoozed for one hour.");
+					await loadReminders();
+				} catch (error) {
+					console.error("Reminder snooze error:", error);
+					setStatus(error instanceof Error ? error.message : "Unable to snooze reminder.", true);
+				} finally {
+					button.disabled = false;
 				}
 			}
 
@@ -667,6 +814,7 @@ const bio = userRows[0].bio || "";
 					});
 					const data = await response.json();
 					if (!response.ok || !data.success) throw new Error(data.message || "Unable to delete reminder.");
+					if (isDueToday(reminder)) announceTodayCountChange(-1);
 					setStatus("Reminder deleted.");
 					await loadReminders();
 				} catch (error) {
@@ -680,6 +828,10 @@ const bio = userRows[0].bio || "";
 				saveReminderButton.disabled = true;
 				const formData = new FormData(reminderForm);
 				const reminderId = editIdInput.value;
+				const previousReminder = reminders.find((reminder) => String(reminder.id) === reminderId);
+				const wasDueToday = previousReminder ? isDueToday(previousReminder) : false;
+				const willBeDueToday = !editingCompleted &&
+					String(formData.get("date")) === localDateKey(new Date());
 				const payload = {
 					title: formData.get("title"),
 					description: formData.get("description"),
@@ -695,6 +847,7 @@ const bio = userRows[0].bio || "";
 					});
 					const data = await response.json();
 					if (!response.ok || !data.success) throw new Error(data.message || "Unable to save reminder.");
+					announceTodayCountChange(Number(willBeDueToday) - Number(wasDueToday));
 					clearForm();
 					setStatus(reminderId ? "Reminder updated." : "Reminder added.");
 					await loadReminders();

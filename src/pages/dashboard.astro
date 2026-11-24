@@ -114,6 +114,33 @@ try {
         ...note,
         attachments: attachmentsByNote.get(String(note.id)) || []
       }));
+      if (viewMode !== "trash") {
+        try {
+          const [noteReminderRows]: any = await pool.execute(
+            `SELECT r.id, r.title, r.note_id AS noteId,
+                    DATE_FORMAT(r.scheduled_at, '%Y-%m-%d') AS date,
+                    TIME_FORMAT(r.scheduled_at, '%H:%i') AS time
+             FROM reminders r
+             WHERE r.user_id = ? AND r.is_completed = 0
+               AND r.note_id IN (${placeholders})
+             ORDER BY r.scheduled_at ASC`,
+            [userId, ...noteIds]
+          );
+          const remindersByNote = new Map<string, any[]>();
+          for (const reminder of noteReminderRows) {
+            const key = String(reminder.noteId);
+            const reminders = remindersByNote.get(key) || [];
+            reminders.push(reminder);
+            remindersByNote.set(key, reminders);
+          }
+          userNotes = userNotes.map((note: any) => ({
+            ...note,
+            reminders: remindersByNote.get(String(note.id)) || []
+          }));
+        } catch (error) {
+          console.error("Dashboard note reminder fetch error:", error);
+        }
+      }
     } else {
       userNotes = noteRows;
     }
@@ -642,6 +669,117 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 	transition: transform 0.25s ease, box-shadow 0.25s ease, opacity 0.2s ease, scale 0.2s ease !important;
 }
 
+.note-controls {
+	display: flex;
+	align-items: center;
+	gap: 8px;
+}
+
+.note-selection-control {
+	display: inline-grid;
+	flex: 0 0 30px;
+	place-items: center;
+	width: 30px;
+	height: 30px;
+	margin-right: auto;
+	border: 1px solid rgba(255, 255, 255, 0.2);
+	border-radius: 9px;
+	background: rgba(255, 255, 255, 0.08);
+	opacity: 0;
+	transition: opacity 0.15s ease;
+}
+
+.note-item:hover .note-selection-control,
+.note-item:focus-within .note-selection-control,
+.note-item.is-selected .note-selection-control {
+	opacity: 1;
+}
+
+.note-selection-checkbox {
+	width: 17px !important;
+	height: 17px !important;
+	margin: 0 !important;
+	padding: 0 !important;
+	accent-color: #a78bfa;
+	cursor: pointer;
+}
+
+.bulk-actions-bar {
+	position: fixed;
+	z-index: 9998;
+	right: 14px;
+	bottom: 18px;
+	left: 14px;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	flex-wrap: wrap;
+	gap: 8px;
+	width: fit-content;
+	max-width: calc(100vw - 28px);
+	margin: 0 auto;
+	padding: 11px 14px;
+	border: 1px solid var(--dashboard-border);
+	border-radius: 16px;
+	background: var(--dashboard-surface);
+	color: var(--dashboard-text);
+	box-shadow: 0 16px 44px rgba(0, 0, 0, 0.35);
+	backdrop-filter: blur(16px);
+	-webkit-backdrop-filter: blur(16px);
+	animation: bulk-actions-enter 0.2s ease-out both;
+}
+
+.bulk-actions-bar[hidden] { display: none !important; }
+
+.bulk-selection-count {
+	padding: 0 5px;
+	font-size: 12px;
+	font-weight: 700;
+	white-space: nowrap;
+}
+
+.bulk-actions-bar button {
+	width: auto;
+	padding: 7px 10px;
+	border: 1px solid var(--dashboard-border);
+	border-radius: 10px;
+	background: var(--dashboard-surface-soft);
+	color: var(--dashboard-text);
+	font-size: 11px;
+	cursor: pointer;
+}
+
+.bulk-actions-bar button:hover { background: var(--dashboard-surface-hover); }
+.bulk-actions-bar button:disabled { cursor: not-allowed; opacity: 0.55; }
+
+.bulk-actions-bar [data-bulk-action="trash"] {
+	border-color: rgba(255, 118, 117, 0.45);
+	background: rgba(255, 118, 117, 0.14);
+}
+
+@keyframes bulk-actions-enter {
+	from { opacity: 0; transform: translateY(12px); }
+	to { opacity: 1; transform: translateY(0); }
+}
+
+@media (hover: none) {
+	.note-selection-control { opacity: 1; }
+}
+
+@media (max-width: 600px) {
+	.bulk-actions-bar {
+		right: 8px;
+		bottom: 12px;
+		left: 8px;
+		max-width: calc(100vw - 16px);
+	}
+}
+
+@media (prefers-reduced-motion: reduce) {
+	.note-selection-control,
+	.bulk-actions-bar { animation: none; transition: none; }
+}
+
 .notes-grid {
 	display: grid;
 	grid-template-columns: repeat(auto-fill, minmax(min(100%, 260px), 1fr));
@@ -704,6 +842,120 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 	margin-top: auto;
 	font-size: 12px;
 	color: rgba(255, 255, 255, 0.7);
+}
+
+.note-reminder-list {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+	margin-top: 10px;
+}
+
+.note-reminder-chip {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr) auto;
+	grid-template-areas:
+		"title title"
+		"due actions";
+	align-items: center;
+	column-gap: 8px;
+	row-gap: 7px;
+	min-width: 0;
+	padding: 7px 9px;
+	border: 1px solid var(--dashboard-border);
+	border-radius: 11px;
+	background: var(--dashboard-surface-soft);
+	color: var(--dashboard-text);
+}
+
+.note-reminder-chip:hover {
+	background: var(--dashboard-surface-hover);
+}
+
+.note-reminder-title-link {
+	grid-area: title;
+	display: block;
+	width: 100%;
+	min-width: 0;
+	color: inherit;
+	text-decoration: none;
+}
+
+.note-reminder-title-link:hover,
+.note-reminder-title-link:focus-visible {
+	text-decoration: underline;
+}
+
+.note-reminder-title {
+	min-width: 0;
+	font-size: 11px;
+	font-weight: 600;
+	overflow-wrap: anywhere;
+}
+
+.note-reminder-due-pill {
+	display: inline-flex;
+	grid-area: due;
+	flex: 0 0 auto;
+	align-items: center;
+	justify-self: start;
+	min-width: 0;
+	max-width: 100%;
+	overflow: hidden;
+	padding: 4px 8px;
+	border: 1px solid rgba(203, 213, 225, 0.3);
+	border-radius: 999px;
+	background: rgba(148, 163, 184, 0.16);
+	color: #e2e8f0;
+	font-size: 10px;
+	font-weight: 600;
+	text-overflow: ellipsis;
+	white-space: nowrap;
+}
+
+.note-reminder-actions {
+	grid-area: actions;
+	display: flex;
+	flex: 0 0 auto;
+	align-items: center;
+	justify-self: end;
+	gap: 5px;
+}
+
+.note-reminder-actions button {
+	min-height: 26px;
+	white-space: nowrap;
+	padding: 4px 7px;
+	border: 1px solid var(--dashboard-border);
+	border-radius: 999px;
+	background: var(--dashboard-surface-soft);
+	color: var(--dashboard-text);
+	font-size: 10px;
+	cursor: pointer;
+}
+
+.note-reminder-actions button:disabled {
+	cursor: wait;
+	opacity: 0.65;
+}
+
+.note-reminder-due-pill.overdue {
+	border-color: rgba(248, 113, 113, 0.45);
+	background: rgba(239, 68, 68, 0.18);
+	color: #fee2e2;
+}
+
+.note-reminder-due-pill.today {
+	border-color: rgba(251, 191, 36, 0.48);
+	background: rgba(245, 158, 11, 0.2);
+	color: #fef3c7;
+}
+
+.note-reminder-due-pill.upcoming,
+.note-reminder-due-pill.completed {
+	border-color: rgba(203, 213, 225, 0.3);
+	background: rgba(148, 163, 184, 0.16);
+	color: #e2e8f0;
 }
 
 .btn-delete-note {
@@ -937,17 +1189,146 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 	overflow-wrap: anywhere;
 }
 
-.note-attachment-list {
+.note-attachment-status:not([hidden]) {
 	display: flex;
-	flex-direction: column;
+	flex-wrap: wrap;
+	align-items: center;
 	gap: 6px;
+}
+
+.note-attachment-item {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	max-width: 100%;
+	min-width: 0;
+	padding: 4px 8px;
+	border: 1px solid var(--dashboard-border);
+	border-radius: 999px;
+	background: var(--dashboard-surface-soft);
+	color: var(--dashboard-text);
+}
+
+.note-attachment-name {
+	overflow-wrap: anywhere;
+}
+
+.note-attachment-item a {
+	color: inherit;
+	overflow-wrap: anywhere;
+}
+
+.note-attachment-remove {
+	flex: 0 0 auto;
+	display: inline-grid;
+	width: 24px;
+	height: 24px;
+	place-items: center;
+	padding: 0;
+	border: 1px solid rgba(185, 28, 28, 0.24);
+	border-radius: 50%;
+	background: rgba(185, 28, 28, 0.08);
+	color: #b42318;
+	font-size: 15px;
+	font-weight: 600;
+	line-height: 1;
+	cursor: pointer;
+	transition: background-color 0.15s, border-color 0.15s, color 0.15s;
+}
+
+.note-attachment-remove:hover {
+	border-color: rgba(185, 28, 28, 0.4);
+	background: rgba(185, 28, 28, 0.15);
+	color: #991b1b;
+}
+
+.note-attachment-remove:focus-visible {
+	outline: 2px solid currentColor;
+	outline-offset: 2px;
+}
+
+.note-attachment-list {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr));
+	gap: 8px;
 	margin-top: 10px;
 	font-size: 12px;
+}
+
+.note-attachment-card {
+	box-sizing: border-box;
+	display: flex;
+	align-items: center;
+	gap: 10px;
+	min-width: 0;
+	padding: 9px 10px;
+	border: 1px solid var(--dashboard-border);
+	border-radius: 12px;
+	background: var(--dashboard-surface-soft);
+	color: var(--dashboard-text);
+}
+
+.note-attachment-icon {
+	display: grid;
+	flex: 0 0 34px;
+	width: 34px;
+	height: 34px;
+	place-items: center;
+	border-radius: 10px;
+	background: var(--dashboard-surface-hover);
+	font-size: 16px;
+}
+
+.note-attachment-content {
+	display: flex;
+	flex: 1;
+	flex-direction: column;
+	gap: 3px;
+	min-width: 0;
+}
+
+.note-attachment-kind {
+	color: var(--dashboard-muted);
+	font-size: 10px;
+	font-weight: 700;
+	letter-spacing: 0.06em;
+	text-transform: uppercase;
+}
+
+.note-attachment-card .note-attachment-name {
+	color: var(--dashboard-text);
+	font-weight: 500;
+	overflow-wrap: anywhere;
+}
+
+.note-attachment-action {
+	width: fit-content;
+	color: #d7c5ff;
+	font-size: 11px;
+	font-weight: 600;
+	text-decoration: none;
+}
+
+.note-attachment-action:hover,
+.note-attachment-action:focus-visible {
+	text-decoration: underline;
 }
 
 .note-attachment-list a {
 	color: #d7c5ff;
 	overflow-wrap: anywhere;
+}
+
+.note-attachment-card.note-image-attachment {
+	display: flex;
+	width: 100%;
+}
+
+.note-attachment-card .attachment-preview-open {
+	flex: 0 0 64px;
+	width: 64px;
+	height: 64px;
+	border-radius: 9px;
 }
 
 .note-image-attachment,
@@ -1320,6 +1701,9 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 }
 
 .comment-drawer.drawer-open {
+	width: 100%;
+	min-width: 0;
+	max-width: 100%;
 	max-height: 280px;
 	margin-top: 15px;
 	padding: 12px;
@@ -1332,6 +1716,8 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 	min-height: 0;
 	max-height: 170px;
 	flex: 1 1 auto;
+	width: 100%;
+	min-width: 0;
 	overflow-y: auto;
 	margin-bottom: 10px;
 	display: flex;
@@ -1352,37 +1738,78 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 	border-radius: 6px;
 }
 
+.comment-empty-state {
+	padding: 10px 4px;
+	color: var(--dashboard-muted);
+	font-size: 11px;
+	text-align: center;
+}
+
 /* Individual micro-chat message bubble boxes */
 .comment-bubble {
-	align-self: stretch;
-	width: 100%;
+	align-self: flex-start;
+	width: fit-content;
+	max-width: 100%;
+	min-width: 0;
 	box-sizing: border-box;
 	background: rgba(255, 255, 255, 0.06);
 	padding: 6px 10px;
 	border-radius: 8px;
 	font-size: 12px;
 	line-height: 1.4;
+	overflow-wrap: anywhere;
 }
 
 .comment-bubble-meta {
+	display: flex;
+	align-items: baseline;
+	justify-content: space-between;
+	gap: 10px;
+	min-width: 0;
+	margin-bottom: 4px;
 	font-size: 10px;
 	color: rgba(255, 255, 255, 0.45);
-	margin-bottom: 2px;
-	display: flex;
-	justify-content: space-between;
+}
+
+.comment-bubble-meta strong,
+.comment-bubble-meta span {
+	min-width: 0;
+	overflow-wrap: anywhere;
+}
+
+.comment-bubble-meta strong {
+	flex: 1 1 auto;
+}
+
+.comment-bubble-meta span {
+	flex: 0 1 auto;
+	text-align: right;
+}
+
+.comment-bubble-text {
+	color: rgba(255, 255, 255, 0.95);
+	white-space: pre-wrap;
+	overflow-wrap: anywhere;
 }
 
 .comment-attachment-list {
 	display: flex;
 	flex-wrap: wrap;
+	align-items: flex-start;
+	max-width: 100%;
 	gap: 6px;
 	margin-top: 6px;
 }
 
+.comment-attachment-list > * {
+	min-width: 0;
+	max-width: 100%;
+}
+
 .comment-image-attachment .attachment-preview-open {
 	display: grid;
-	flex: 0 1 auto;
-	width: min(120px, 35vw);
+	flex: 0 1 120px;
+	width: min(120px, 100%);
 	max-width: 100%;
 	height: 88px;
 	min-width: 0;
@@ -1393,12 +1820,21 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 	display: flex;
 	flex-direction: column;
 	align-items: flex-start;
-	width: auto;
+	min-width: 0;
+	width: min(120px, 100%);
 	max-width: 100%;
 }
 
+.comment-image-attachment .comment-attachment-download {
+	max-width: 100%;
+	color: #e2d5ff;
+	font-size: 10px;
+	overflow-wrap: anywhere;
+}
+
 .comment-location-link {
-	align-self: center;
+	display: block;
+	max-width: 100%;
 	color: #d7c5ff;
 	font-size: 11px;
 	overflow-wrap: anywhere;
@@ -1406,6 +1842,7 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 
 .comment-attachment-link {
 	display: inline-grid;
+	flex: 0 0 30px;
 	place-items: center;
 	width: 30px;
 	height: 30px;
@@ -1415,6 +1852,7 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 	color: #fff;
 	text-decoration: none;
 	font-size: 15px;
+	box-sizing: border-box;
 }
 
 .comment-attachment-link:hover,
@@ -1430,6 +1868,7 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 	gap: 6px;
 	width: 100%;
 	min-width: 0;
+	max-width: 100%;
 	box-sizing: border-box;
 }
 
@@ -1491,13 +1930,15 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 	left: 0;
 	bottom: 42px;
 	display: grid;
-	grid-template-columns: repeat(4, 36px);
+	grid-template-columns: repeat(4, minmax(0, 1fr));
+	width: min(176px, 100%);
 	gap: 6px;
 	padding: 8px;
 	border: 1px solid rgba(255, 255, 255, 0.15);
 	border-radius: 12px;
 	background: rgba(38, 22, 79, 0.97);
 	box-shadow: 0 8px 22px rgba(0, 0, 0, 0.3);
+	box-sizing: border-box;
 }
 
 .chat-attachment-actions[hidden] {
@@ -1507,7 +1948,8 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 .chat-composer-field .chat-attachment-icon {
 	display: grid;
 	place-items: center;
-	width: 36px !important;
+	width: 100% !important;
+	min-width: 0;
 	height: 36px !important;
 	padding: 0 !important;
 	border: 1px solid rgba(255, 255, 255, 0.15);
@@ -1515,6 +1957,12 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 	background: rgba(255, 255, 255, 0.1);
 	color: #fff;
 	font-size: 17px;
+}
+
+.chat-attachment-icon svg {
+	display: block;
+	width: 18px;
+	height: 18px;
 }
 
 .chat-attachment-icon:hover,
@@ -1537,7 +1985,8 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 	flex-direction: column;
 	align-items: flex-start;
 	gap: 6px;
-	max-width: min(250px, 70vw);
+	width: min(250px, 100%);
+	max-width: 100%;
 	max-height: 180px;
 	overflow: auto;
 	padding: 6px 9px;
@@ -1546,6 +1995,7 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 	color: rgba(255, 255, 255, 0.9);
 	font-size: 11px;
 	overflow-wrap: anywhere;
+	box-sizing: border-box;
 }
 
 .chat-attachment-status[hidden] {
@@ -1715,11 +2165,28 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 	color: var(--dashboard-muted);
 }
 
+:root[data-theme="dark"] .note-attachment-remove {
+	border-color: rgba(248, 113, 113, 0.3);
+	background: rgba(248, 113, 113, 0.12);
+	color: #fca5a5;
+}
+
+:root[data-theme="dark"] .note-attachment-remove:hover {
+	border-color: rgba(252, 165, 165, 0.65);
+	background: rgba(248, 113, 113, 0.22);
+	color: #fee2e2;
+}
+
 .dashboard-productivity {
 	display: grid;
 	grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
 	gap: 14px;
 	margin-top: 18px;
+}
+
+.dashboard-productivity[hidden],
+#notesViewControls[hidden] {
+	display: none;
 }
 
 .dashboard-utility-card {
@@ -1988,7 +2455,7 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 			)}
 
 			{viewMode === "dashboard" && (
-			<div class="dashboard-productivity">
+			<div class="dashboard-productivity" id="dashboardProductivity">
 				<section class="dashboard-utility-card" aria-labelledby="miniCalendarHeading">
 					<div class="dashboard-utility-header">
 						<h3 id="miniCalendarHeading">Mini Calendar</h3>
@@ -2044,8 +2511,8 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 				</div>
 			)}
 
-			{viewMode !== "dashboard" && viewMode !== "trash" && (
-			<>
+			{viewMode !== "trash" && (
+			<div id="notesViewControls" hidden={viewMode === "dashboard"}>
 			<!-- Live Workspace Filter Query Bar -->
 			<div class="search-wrapper">
 					<span class="search-icon">🔍</span>
@@ -2096,13 +2563,13 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 						<input class="note-attachment-input" type="file" id="notePhotoInput" name="photoAttachments" multiple accept="image/jpeg,image/png,image/gif,image/webp,image/heic,image/heif" />
 						<input class="note-attachment-input" type="file" id="noteCameraInput" name="cameraAttachment" accept="image/*" capture="environment" />
 					</div>
-					<p class="note-attachment-status" id="noteAttachmentStatus" aria-live="polite">No attachments selected.</p>
+					<p class="note-attachment-status" id="noteAttachmentStatus" aria-live="polite" hidden></p>
 					<input type="hidden" id="noteLatitude" name="latitude" />
 					<input type="hidden" id="noteLongitude" name="longitude" />
 					
 					<button type="submit" class="btn-add-note">Add Note</button>
 				</form>
-			</>
+			</div>
 			)}
 
 			<div class="notes-grid" id="notes">
@@ -2130,6 +2597,15 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 				) : (
 				<>
 				<div class="note-controls">
+					<label class="note-selection-control">
+						<input
+							type="checkbox"
+							class="note-selection-checkbox"
+							data-bulk-select-note
+							value={note.id}
+							aria-label={`Select ${note.title}`}
+						/>
+					</label>
 					<button type="button" class="btn-card-action btn-comment-toggle" data-id={note.id} aria-controls={`drawer-${note.id}`} aria-expanded="false" title="Open comments">💬 Chat <span class="chat-unread-badge" data-unread-count hidden></span></button>
 					{note.user_role === 'owner' && (
 						<button class="btn-card-action btn-share-note" data-id={note.id} title="Share note with a friend">Share</button>
@@ -2143,6 +2619,32 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 					)}
 					<h4 data-note-title>{note.title}</h4>
 					<p data-note-content>{note.content}</p>
+					{note.reminders?.length > 0 && (
+						<div class="note-reminder-list" aria-label="Active reminders for this note">
+							{note.reminders.map((reminder: any) => (
+								<div
+									class="note-reminder-chip"
+									data-note-reminder
+									data-reminder-id={reminder.id}
+									data-due-date={reminder.date}
+								>
+									<a class="note-reminder-title-link" href={`/reminders?id=${encodeURIComponent(String(reminder.id))}`} aria-label={`Open reminder ${reminder.title}`}>
+										<span class="note-reminder-title">{reminder.title}</span>
+									</a>
+									<time
+										class="note-reminder-due-pill upcoming"
+										datetime={`${reminder.date}T${reminder.time}`}
+										data-due-date={reminder.date}
+										data-due-time={reminder.time}
+									>{reminder.date} {reminder.time}</time>
+									<div class="note-reminder-actions" aria-label={`Actions for ${reminder.title}`}>
+										<button type="button" data-reminder-action="complete" aria-label={`Complete ${reminder.title}`} title="Complete">✓</button>
+										<button type="button" data-reminder-action="snooze" aria-label={`Snooze ${reminder.title} for one hour`} title="Snooze for one hour">Snooze 1h</button>
+									</div>
+								</div>
+							))}
+						</div>
+					)}
 					<div class="note-card-actions">
 						<button type="button" class="btn-view-note" data-id={note.id}>View</button>
 						{note.user_role === 'owner' && (
@@ -2160,23 +2662,37 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 						)}
 					</div>
 					{note.attachments?.length > 0 && (
-						<div class="note-attachment-list">
+						<div class="note-attachment-list" role="list" aria-label="Note attachments">
 							{note.attachments.map((attachment: any) => (
 								attachment.attachment_type === "location" ? (
-									<a href={`https://www.google.com/maps?q=${encodeURIComponent(`${attachment.latitude},${attachment.longitude}`)}`} target="_blank" rel="noopener noreferrer" title="Open exact coordinates in Google Maps">
-										📍 Exact location: {attachment.latitude}, {attachment.longitude}
-									</a>
+									<div class="note-attachment-card" role="listitem">
+										<span class="note-attachment-icon" aria-hidden="true">📍</span>
+										<div class="note-attachment-content">
+											<span class="note-attachment-kind">Location</span>
+											<span class="note-attachment-name">{attachment.latitude}, {attachment.longitude}</span>
+											<a class="note-attachment-action" href={`https://www.google.com/maps?q=${encodeURIComponent(`${attachment.latitude},${attachment.longitude}`)}`} target="_blank" rel="noopener noreferrer" title="Open exact coordinates in Google Maps">Open in Maps</a>
+										</div>
+									</div>
 								) : attachment.mime_type?.startsWith("image/") ? (
-									<div class="note-image-attachment">
+									<div class="note-attachment-card note-image-attachment" role="listitem">
 										<button type="button" class="attachment-preview-open" data-preview-src={`/note-attachments-api?id=${attachment.id}&preview=1`} data-preview-download={`/note-attachments-api?id=${attachment.id}`} data-preview-name={attachment.original_name} aria-label={`View ${attachment.original_name} full screen`}>
 											<img src={`/note-attachments-api?id=${attachment.id}&preview=1`} alt={`Preview of ${attachment.original_name}`} loading="lazy" />
 										</button>
-										<a href={`/note-attachments-api?id=${attachment.id}`} download>{attachment.attachment_type === "camera" ? "📷" : "🖼️"} Download {attachment.original_name}</a>
+										<div class="note-attachment-content">
+											<span class="note-attachment-kind">{attachment.attachment_type === "camera" ? "Camera" : "Photo"}</span>
+											<span class="note-attachment-name">{attachment.original_name}</span>
+											<a class="note-attachment-action" href={`/note-attachments-api?id=${attachment.id}`} download>Download</a>
+										</div>
 									</div>
 								) : (
-									<a href={`/note-attachments-api?id=${attachment.id}`} download>
-										{attachment.attachment_type === "camera" ? "📷" : attachment.attachment_type === "photo" ? "🖼️" : "📎"} {attachment.original_name}
-									</a>
+									<div class="note-attachment-card" role="listitem">
+										<span class="note-attachment-icon" aria-hidden="true">{attachment.attachment_type === "camera" ? "📷" : attachment.attachment_type === "photo" ? "🖼️" : "📎"}</span>
+										<div class="note-attachment-content">
+											<span class="note-attachment-kind">{attachment.attachment_type === "camera" ? "Camera" : attachment.attachment_type === "photo" ? "Photo" : "File"}</span>
+											<span class="note-attachment-name">{attachment.original_name}</span>
+											<a class="note-attachment-action" href={`/note-attachments-api?id=${attachment.id}`} download>Download</a>
+										</div>
+									</div>
 								)
 							))}
 						</div>
@@ -2202,10 +2718,10 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 						<div class="chat-composer-field">
 							<button type="button" class="chat-attachment-toggle" aria-label="Show attachment options" aria-expanded="false" title="Attachments">+</button>
 							<div class="chat-attachment-actions" hidden>
-								<button type="button" class="chat-attachment-icon" data-chat-attachment="file" aria-label="Attach file" title="Attach file">📎</button>
-								<button type="button" class="chat-attachment-icon" data-chat-attachment="photo" aria-label="Add photo" title="Add photo">🖼️</button>
-								<button type="button" class="chat-attachment-icon" data-chat-attachment="camera" aria-label="Open camera" title="Open camera">📷</button>
-								<button type="button" class="chat-attachment-icon" data-chat-attachment="location" aria-label="Add location" title="Add location">📍</button>
+								<button type="button" class="chat-attachment-icon" data-chat-attachment="file" aria-label="Attach file" title="Attach file"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m8 12.5 7.1-7.1a3.2 3.2 0 0 1 4.5 4.5l-9.2 9.2a5 5 0 0 1-7.1-7.1l9.2-9.2"/></svg></button>
+								<button type="button" class="chat-attachment-icon" data-chat-attachment="photo" aria-label="Add photo" title="Add photo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9" r="1.5"/><path d="m21 15-5-5L5 20"/></svg></button>
+								<button type="button" class="chat-attachment-icon" data-chat-attachment="camera" aria-label="Open camera" title="Open camera"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M4 7h3l1.5-2h7L17 7h3a1 1 0 0 1 1 1v11H3V8a1 1 0 0 1 1-1Z"/><circle cx="12" cy="13" r="3.5"/></svg></button>
+								<button type="button" class="chat-attachment-icon" data-chat-attachment="location" aria-label="Add location" title="Add location"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M20 10c0 5-8 12-8 12S4 15 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="2.5"/></svg></button>
 							</div>
 							<input class="chat-attachment-input" type="file" name="fileAttachments" multiple accept=".pdf,.txt,.csv,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.jpg,.jpeg,.png,.gif,.webp,.heic,.heif" />
 							<input class="chat-attachment-input" type="file" name="photoAttachments" multiple accept="image/jpeg,image/png,image/gif,image/webp,image/heic,image/heif" />
@@ -2223,6 +2739,15 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 			</div>
 		))
 	)}
+</div>
+
+<div id="bulkActionsBar" class="bulk-actions-bar" aria-label="Bulk note actions" hidden>
+	<span id="bulkSelectionCount" class="bulk-selection-count" role="status" aria-live="polite">0 selected</span>
+	<button type="button" data-bulk-action="pin">Pin</button>
+	<button type="button" data-bulk-action="favorite">Favorite</button>
+	<button type="button" data-bulk-action="reminder">Set Reminder</button>
+	<button type="button" data-bulk-action="trash">Move to Trash</button>
+	<button type="button" data-clear-bulk-selection>Clear</button>
 </div>
 
 			</div>
@@ -2252,7 +2777,7 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 		<p id="noteViewContent" class="note-dialog-body"></p>
 		<div>
 			<strong>Attachments</strong>
-			<div id="noteViewAttachments" class="note-attachment-list"></div>
+			<div id="noteViewAttachments"></div>
 		</div>
 		<time id="noteViewDate" class="note-dialog-date"></time>
 	</div>
@@ -2322,6 +2847,33 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 			<div class="note-dialog-actions">
 				<button type="button" data-close-note-dialog>Cancel</button>
 				<button type="submit">Save reminder</button>
+			</div>
+		</form>
+	</div>
+</dialog>
+
+<dialog id="bulkReminderDialog" class="note-dialog" aria-labelledby="bulkReminderHeading">
+	<div class="note-dialog-content">
+		<div class="note-dialog-header">
+			<h2 id="bulkReminderHeading">Set reminders for selected notes</h2>
+			<button type="button" data-close-note-dialog>Close</button>
+		</div>
+		<p class="bulk-reminder-description">Each selected note gets its own reminder at this shared date and time.</p>
+		<form id="bulkReminderForm" class="note-edit-form">
+			<div class="note-reminder-fields">
+				<div>
+					<label for="bulkReminderDate">Date</label>
+					<input id="bulkReminderDate" name="date" type="date" required />
+				</div>
+				<div>
+					<label for="bulkReminderTime">Time</label>
+					<input id="bulkReminderTime" name="time" type="time" value="09:00" required />
+				</div>
+			</div>
+			<p id="bulkReminderStatus" class="note-edit-error" role="alert" hidden></p>
+			<div class="note-dialog-actions">
+				<button type="button" data-close-note-dialog>Cancel</button>
+				<button type="submit">Set reminders</button>
 			</div>
 		</form>
 	</div>
@@ -2428,6 +2980,171 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 		return element?.closest<HTMLElement>(".note-item") || null;
 	}
 
+	function getSelectedNoteCards(): HTMLElement[] {
+		return Array.from(document.querySelectorAll<HTMLInputElement>("[data-bulk-select-note]:checked"))
+			.map((checkbox) => getNoteCard(checkbox))
+			.filter((card): card is HTMLElement => card !== null);
+	}
+
+	function updateBulkActionsBar() {
+		const bar = document.getElementById("bulkActionsBar");
+		const count = document.getElementById("bulkSelectionCount");
+		if (!bar) return;
+
+		const selectedCards = getSelectedNoteCards();
+		const hasEnoughNotes = selectedCards.length >= 2;
+		const tooManyNotes = selectedCards.length > 100;
+		const allOwned = selectedCards.every((card) => card.dataset.userRole === "owner");
+		bar.hidden = !hasEnoughNotes;
+		if (count) count.textContent = `${selectedCards.length} selected`;
+
+		bar.querySelectorAll<HTMLButtonElement>("[data-bulk-action]").forEach((button) => {
+			const ownerOnly = button.dataset.bulkAction === "reminder" || button.dataset.bulkAction === "trash";
+			button.disabled = !hasEnoughNotes || tooManyNotes || (ownerOnly && !allOwned);
+			button.title = tooManyNotes
+				? "Select no more than 100 notes at a time."
+				: ownerOnly && !allOwned
+					? "This action is available only when all selected notes belong to you."
+					: "";
+		});
+	}
+
+	async function performBulkNoteAction(
+		action: "pin" | "favorite" | "reminder" | "trash",
+		details: { date?: string; time?: string } = {},
+		submitButton: HTMLButtonElement | null = null,
+		status: HTMLElement | null = null
+	) {
+		const selectedCards = getSelectedNoteCards();
+		if (selectedCards.length < 2 || selectedCards.length > 100) {
+			showNotificationToast("Select between 2 and 100 notes for a bulk action.", true);
+			return;
+		}
+
+		const noteIds = selectedCards.map((card) => card.dataset.id || "");
+		if (noteIds.some((id) => !id) || new Set(noteIds).size !== noteIds.length) {
+			showNotificationToast("One or more selected notes could not be identified.", true);
+			return;
+		}
+		if ((action === "reminder" || action === "trash") &&
+			selectedCards.some((card) => card.dataset.userRole !== "owner")) {
+			showNotificationToast("This action is available only for notes you own.", true);
+			return;
+		}
+		if (action === "trash" &&
+			!window.confirm(`Move ${selectedCards.length} selected notes to Trash? You can restore them within 30 days.`)) {
+			return;
+		}
+
+		const bar = document.getElementById("bulkActionsBar");
+		const barButtons = Array.from(bar?.querySelectorAll<HTMLButtonElement>("button") || []);
+		const selectionInputs = Array.from(document.querySelectorAll<HTMLInputElement>("[data-bulk-select-note]"));
+		barButtons.forEach((button) => { button.disabled = true; });
+		selectionInputs.forEach((input) => { input.disabled = true; });
+		if (submitButton) submitButton.disabled = true;
+		if (status) {
+			status.hidden = true;
+			status.textContent = "";
+		}
+
+		try {
+			const response = await fetch("/bulk-notes-api", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ action, ids: noteIds, ...details })
+			});
+			const data = await response.json();
+			if (!response.ok || !data.success) {
+				throw new Error(data.message || "Unable to apply this action to the selected notes.");
+			}
+
+			const affectedCount = Number(data.affectedCount);
+			const count = Number.isSafeInteger(affectedCount) && affectedCount > 0
+				? affectedCount
+				: noteIds.length;
+			const message = action === "pin"
+				? `Pinned ${count} notes.`
+				: action === "favorite"
+					? `Added ${count} notes to Favorites.`
+					: action === "reminder"
+						? `Set reminders for ${count} notes.`
+						: `Moved ${count} notes to Trash.`;
+			if (action === "reminder") {
+				(document.getElementById("bulkReminderDialog") as HTMLDialogElement | null)?.close();
+			}
+			showNotificationToast(message);
+			window.setTimeout(() => window.location.reload(), 800);
+		} catch (error) {
+			console.error("Bulk note action failed.", error);
+			const message = error instanceof Error
+				? error.message
+				: "Unable to apply this action to the selected notes.";
+			if (status) {
+				status.textContent = message;
+				status.hidden = false;
+			} else {
+				showNotificationToast(message, true);
+			}
+		} finally {
+			barButtons.forEach((button) => { button.disabled = false; });
+			selectionInputs.forEach((input) => { input.disabled = false; });
+			if (submitButton) submitButton.disabled = false;
+			updateBulkActionsBar();
+		}
+	}
+
+	document.addEventListener("change", (event) => {
+		const target = event.target;
+		if (!(target instanceof HTMLInputElement) || !target.matches("[data-bulk-select-note]")) return;
+		getNoteCard(target)?.classList.toggle("is-selected", target.checked);
+		updateBulkActionsBar();
+	});
+
+	document.getElementById("bulkActionsBar")?.querySelectorAll<HTMLButtonElement>("[data-bulk-action]").forEach((button) => {
+		button.addEventListener("click", () => {
+			const action = button.dataset.bulkAction;
+			if (action === "reminder") {
+				const dialog = document.getElementById("bulkReminderDialog") as HTMLDialogElement | null;
+				const dateInput = document.getElementById("bulkReminderDate") as HTMLInputElement | null;
+				const timeInput = document.getElementById("bulkReminderTime") as HTMLInputElement | null;
+				const status = document.getElementById("bulkReminderStatus");
+				if (!dialog || !dateInput || !timeInput) return;
+				dateInput.value = localDateKey();
+				timeInput.value = "09:00";
+				if (status) {
+					status.hidden = true;
+					status.textContent = "";
+				}
+				dialog.showModal();
+				dateInput.focus();
+				return;
+			}
+			if (action === "pin" || action === "favorite" || action === "trash") {
+				void performBulkNoteAction(action);
+			}
+		});
+	});
+
+	document.querySelector("[data-clear-bulk-selection]")?.addEventListener("click", () => {
+		document.querySelectorAll<HTMLInputElement>("[data-bulk-select-note]").forEach((checkbox) => {
+			checkbox.checked = false;
+			getNoteCard(checkbox)?.classList.remove("is-selected");
+		});
+		updateBulkActionsBar();
+	});
+
+	document.getElementById("bulkReminderForm")?.addEventListener("submit", (event) => {
+		event.preventDefault();
+		const form = event.currentTarget as HTMLFormElement;
+		const submitButton = form.querySelector<HTMLButtonElement>('button[type="submit"]');
+		const status = document.getElementById("bulkReminderStatus");
+		const formData = new FormData(form);
+		void performBulkNoteAction("reminder", {
+			date: String(formData.get("date") || ""),
+			time: String(formData.get("time") || "")
+		}, submitButton, status);
+	});
+
 	function openNoteView(card: HTMLElement) {
 		const dialog = document.getElementById("noteViewDialog") as HTMLDialogElement | null;
 		const title = card.querySelector<HTMLElement>("[data-note-title]")?.textContent || "";
@@ -2514,7 +3231,39 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 	const noteAttachmentStatus = document.getElementById("noteAttachmentStatus");
 	const noteLatitudeInput = document.getElementById("noteLatitude") as HTMLInputElement | null;
 	const noteLongitudeInput = document.getElementById("noteLongitude") as HTMLInputElement | null;
+	let noteLocationRequestId = 0;
 	
+	function updateNoteReminderDuePills() {
+		const now = new Date();
+		const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
+		document.querySelectorAll<HTMLTimeElement>(".note-reminder-due-pill").forEach((pill) => {
+			const date = pill.dataset.dueDate;
+			const time = pill.dataset.dueTime;
+			if (!date || !time) return;
+
+			const dueAt = new Date(`${date}T${time}:00`);
+			if (Number.isNaN(dueAt.getTime())) return;
+			const dueStatus = dueAt.getTime() < now.getTime() ? "overdue" : date === today ? "today" : "upcoming";
+			const dueLabel = dueAt.toLocaleString(undefined, {
+				month: "short",
+				day: "numeric",
+				hour: "numeric",
+				minute: "2-digit"
+			});
+			const statusLabel = dueStatus === "today" ? "Today" : dueStatus === "overdue" ? "Overdue" : "Upcoming";
+			pill.classList.remove("overdue", "today", "upcoming");
+			pill.classList.add(dueStatus);
+			pill.textContent = `${statusLabel} · ${dueLabel}`;
+			pill.setAttribute("aria-label", `${statusLabel}: ${dueLabel}`);
+			pill.title = statusLabel;
+			const snoozeButton = pill.closest<HTMLElement>("[data-note-reminder]")?.querySelector<HTMLButtonElement>('[data-reminder-action="snooze"]');
+			if (snoozeButton) snoozeButton.hidden = dueStatus === "upcoming";
+		});
+	}
+
+	updateNoteReminderDuePills();
+	window.setInterval(updateNoteReminderDuePills, 60_000);
+
 	const profileDisplayNameInput = document.getElementById("profileDisplayName") as HTMLInputElement | null;
 	const displayNameCounter = document.getElementById("displayNameCounter");
 	const profileBioInput = document.getElementById("profileBio") as HTMLTextAreaElement | null;
@@ -2527,10 +3276,20 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 
 	// Active Category state caching parameter tracker
 	const requestedNoteFilter = new URLSearchParams(window.location.search).get("filter");
-	const workspaceViewMode = document.querySelector<HTMLElement>(".workspace-content")?.dataset.viewMode || "dashboard";
-	let activeCategoryFilter = requestedNoteFilter && requestedNoteFilter !== "favorites" && requestedNoteFilter !== "pinned"
-		? requestedNoteFilter
-		: "all";
+	const initialHashSection = window.location.hash.slice(1).toLowerCase();
+	const hashViewMode = ["notes", "favorites", "pinned"].includes(initialHashSection)
+		? initialHashSection
+		: null;
+	const serverViewMode = document.querySelector<HTMLElement>(".workspace-content")?.dataset.viewMode || "dashboard";
+	const initialCategoryFilter = requestedNoteFilter && requestedNoteFilter !== "favorites" && requestedNoteFilter !== "pinned"
+			? requestedNoteFilter
+			: serverViewMode === "favorites" || serverViewMode === "pinned"
+				? serverViewMode
+				: "all";
+	let workspaceViewMode = hashViewMode ? "dashboard" : serverViewMode;
+	let activeCategoryFilter = hashViewMode
+		? hashViewMode === "notes" ? "all" : hashViewMode
+		: initialCategoryFilter;
 
 	function sortNoteCards() {
 		if (!notesGrid) return;
@@ -2539,13 +3298,25 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 		cards.forEach((card) => notesGrid.append(card));
 	}
 
+	function localDateKey() {
+		const today = new Date();
+		return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
+	}
+
+	function announceWorkspaceCountChange(key: string, delta: number) {
+		if (delta !== 0) {
+			window.dispatchEvent(new CustomEvent("workspace-count-change", { detail: { key, delta } }));
+		}
+	}
+
 	async function updateNotePreference(button: HTMLButtonElement) {
 		const card = getNoteCard(button);
 		const noteId = button.dataset.id;
 		const preference = button.dataset.preference;
 		if (!card || !noteId || (preference !== "pinned" && preference !== "favorite")) return;
 
-		const enabled = card.dataset[preference] !== "true";
+		const wasEnabled = card.dataset[preference] === "true";
+		const enabled = !wasEnabled;
 		button.disabled = true;
 		try {
 			const response = await fetch(`/note-preferences-api?noteId=${encodeURIComponent(noteId)}`, {
@@ -2559,6 +3330,7 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 			}
 
 			card.dataset[preference] = String(enabled);
+			announceWorkspaceCountChange(preference === "favorite" ? "favorites" : "pinned", enabled ? 1 : -1);
 			button.setAttribute("aria-pressed", String(enabled));
 			button.classList.toggle("is-active", enabled);
 			button.textContent = preference === "pinned"
@@ -2577,6 +3349,58 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 		}
 	}
 
+	async function updateNoteCardReminder(button: HTMLButtonElement) {
+		const reminderCard = button.closest<HTMLElement>("[data-note-reminder]");
+		const reminderId = reminderCard?.dataset.reminderId;
+		const action = button.dataset.reminderAction;
+		const dueDate = reminderCard?.dataset.dueDate;
+		if (!reminderCard || !reminderId || !dueDate || (action !== "complete" && action !== "snooze")) return;
+
+		button.disabled = true;
+		try {
+			const response = await fetch(`/reminders-api?id=${encodeURIComponent(reminderId)}`, {
+				method: "PUT",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify(action === "complete" ? { completed: true } : { snoozeMinutes: 60 })
+			});
+			const data = await response.json();
+			if (!response.ok || !data.success) {
+				throw new Error(data.message || "Unable to update this reminder.");
+			}
+
+			if (action === "complete") {
+				if (dueDate === localDateKey()) announceWorkspaceCountChange("remindersToday", -1);
+				const list = reminderCard.closest(".note-reminder-list");
+				reminderCard.remove();
+				if (list?.childElementCount === 0) list.remove();
+				showNotificationToast("Reminder completed.");
+			} else {
+				if (typeof data.date !== "string" || typeof data.time !== "string") {
+					throw new Error("The reminder was snoozed, but its updated schedule could not be loaded.");
+				}
+				if (dueDate === localDateKey() && data.date !== localDateKey()) {
+					announceWorkspaceCountChange("remindersToday", -1);
+				} else if (dueDate !== localDateKey() && data.date === localDateKey()) {
+					announceWorkspaceCountChange("remindersToday", 1);
+				}
+				reminderCard.dataset.dueDate = data.date;
+				const duePill = reminderCard.querySelector<HTMLTimeElement>(".note-reminder-due-pill");
+				if (duePill) {
+					duePill.dataset.dueDate = data.date;
+					duePill.dataset.dueTime = data.time;
+					duePill.dateTime = `${data.date}T${data.time}`;
+				}
+				updateNoteReminderDuePills();
+				showNotificationToast("Reminder snoozed for one hour.");
+			}
+		} catch (error) {
+			console.error("Note card reminder update error.", error);
+			showNotificationToast(error instanceof Error ? error.message : "Unable to update this reminder.", true);
+		} finally {
+			button.disabled = false;
+		}
+	}
+
 	document.querySelectorAll<HTMLButtonElement>(".btn-note-preference").forEach((button) => {
 		button.addEventListener("click", () => updateNotePreference(button));
 	});
@@ -2589,6 +3413,12 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 	document.addEventListener("click", (event) => {
 		const target = event.target;
 		if (!(target instanceof Element)) return;
+
+		const reminderAction = target.closest<HTMLButtonElement>("[data-reminder-action]");
+		if (reminderAction) {
+			void updateNoteCardReminder(reminderAction);
+			return;
+		}
 
 		const restoreButton = target.closest<HTMLButtonElement>(".btn-restore-note");
 		if (restoreButton) {
@@ -2677,6 +3507,7 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 				throw new Error(data.message || "Unable to save this reminder.");
 			}
 
+			if (payload.date === localDateKey()) announceWorkspaceCountChange("remindersToday", 1);
 			(document.getElementById("noteReminderDialog") as HTMLDialogElement).close();
 			showNotificationToast("Reminder created for this note.");
 			setTimeout(() => {
@@ -2810,31 +3641,86 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 			container.append(button);
 		}
 		selectedPreviewUrls.set(container, previewUrls);
+		applyDashboardStyleScope(container);
 	}
 
 	function updateNoteAttachmentStatus() {
 		if (!noteAttachmentStatus) return;
 		const selectedFiles = [noteFileInput, notePhotoInput, noteCameraInput]
-			.flatMap(input => Array.from(input?.files || []));
-		const displayedNames = [...new Set(selectedFiles.map(file => file.name))];
+			.flatMap(input => input
+				? Array.from(input.files || []).map((file, index) => ({ input, file, index }))
+				: []);
 		const hasLocation = Boolean(noteLatitudeInput?.value && noteLongitudeInput?.value);
 		noteAttachmentStatus.replaceChildren();
-		if (displayedNames.length > 0) {
-			noteAttachmentStatus.textContent = `Selected: ${displayedNames.join(", ")}`;
-		}
+		noteAttachmentStatus.hidden = selectedFiles.length === 0 && !hasLocation;
+		if (noteAttachmentStatus.hidden) return;
+
+		selectedFiles.forEach(({ input, file, index }) => {
+			const item = document.createElement("span");
+			item.className = "note-attachment-item";
+
+			const name = document.createElement("span");
+			name.className = "note-attachment-name";
+			name.textContent = file.name;
+
+			const removeButton = document.createElement("button");
+			removeButton.type = "button";
+			removeButton.className = "note-attachment-remove";
+			removeButton.textContent = "×";
+			removeButton.setAttribute("aria-label", `Remove ${file.name}`);
+			removeButton.title = `Remove ${file.name}`;
+			removeButton.addEventListener("click", () => {
+				const remainingFiles = new DataTransfer();
+				Array.from(input.files || []).forEach((selectedFile, selectedIndex) => {
+					if (selectedIndex !== index) remainingFiles.items.add(selectedFile);
+				});
+				input.files = remainingFiles.files;
+				updateNoteAttachmentStatus();
+			});
+
+			item.append(name, removeButton);
+			noteAttachmentStatus.append(item);
+		});
+
 		if (hasLocation) {
-			if (displayedNames.length > 0) noteAttachmentStatus.append(document.createTextNode(" · "));
 			const latitude = noteLatitudeInput?.value || "";
 			const longitude = noteLongitudeInput?.value || "";
+			const item = document.createElement("span");
+			item.className = "note-attachment-item";
+			item.dataset.noteLocationStatus = "true";
+
 			const locationLink = document.createElement("a");
 			locationLink.href = `https://www.google.com/maps?q=${encodeURIComponent(`${latitude},${longitude}`)}`;
 			locationLink.target = "_blank";
 			locationLink.rel = "noopener noreferrer";
 			locationLink.textContent = `📍 Exact location: ${latitude}, ${longitude}`;
-			noteAttachmentStatus.append(locationLink);
+			item.append(locationLink);
+
+			const removeLocationButton = document.createElement("button");
+			removeLocationButton.type = "button";
+			removeLocationButton.className = "note-attachment-remove";
+			removeLocationButton.textContent = "×";
+			removeLocationButton.setAttribute("aria-label", "Remove location attachment");
+			removeLocationButton.title = "Remove location attachment";
+			removeLocationButton.addEventListener("click", clearNoteLocationSelection);
+
+			item.append(removeLocationButton);
+			noteAttachmentStatus.append(item);
 		}
-		if (selectedFiles.length === 0 && !hasLocation) {
-			noteAttachmentStatus.textContent = "No attachments selected.";
+	}
+
+	function clearNoteLocationSelection() {
+		noteLocationRequestId++;
+		if (noteLatitudeInput) noteLatitudeInput.value = "";
+		if (noteLongitudeInput) noteLongitudeInput.value = "";
+		updateNoteAttachmentStatus();
+	}
+
+	function hideNoteLocationStatus() {
+		if (!noteAttachmentStatus) return;
+		noteAttachmentStatus.querySelector("[data-note-location-status]")?.remove();
+		if (noteAttachmentStatus.childElementCount === 0) {
+			noteAttachmentStatus.hidden = true;
 		}
 	}
 
@@ -2850,14 +3736,40 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 			showNotificationToast("Location is not supported by this browser.", true);
 			return;
 		}
-		if (noteAttachmentStatus) noteAttachmentStatus.textContent = "Getting your location…";
+		const requestId = ++noteLocationRequestId;
+		if (noteLatitudeInput) noteLatitudeInput.value = "";
+		if (noteLongitudeInput) noteLongitudeInput.value = "";
+		updateNoteAttachmentStatus();
+		if (noteAttachmentStatus) {
+			const item = document.createElement("span");
+			item.className = "note-attachment-item";
+			item.dataset.noteLocationStatus = "true";
+
+			const statusText = document.createElement("span");
+			statusText.className = "note-attachment-name";
+			statusText.textContent = "Getting your location…";
+
+			const cancelButton = document.createElement("button");
+			cancelButton.type = "button";
+			cancelButton.className = "note-attachment-remove";
+			cancelButton.textContent = "×";
+			cancelButton.setAttribute("aria-label", "Cancel location attachment");
+			cancelButton.title = "Cancel location attachment";
+			cancelButton.addEventListener("click", clearNoteLocationSelection);
+
+			item.append(statusText, cancelButton);
+			noteAttachmentStatus.hidden = false;
+			noteAttachmentStatus.append(item);
+		}
 		navigator.geolocation.getCurrentPosition(
 			(position) => {
+				if (requestId !== noteLocationRequestId) return;
 				if (noteLatitudeInput) noteLatitudeInput.value = String(position.coords.latitude);
 				if (noteLongitudeInput) noteLongitudeInput.value = String(position.coords.longitude);
 				updateNoteAttachmentStatus();
 			},
 			(error) => {
+				if (requestId !== noteLocationRequestId) return;
 				updateNoteAttachmentStatus();
 				showNotificationToast(`Could not get location: ${error.message}`, true);
 			},
@@ -2866,17 +3778,50 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 	});
 
 	addNoteForm?.addEventListener("reset", () => {
+		noteLocationRequestId++;
 		setTimeout(updateNoteAttachmentStatus, 0);
 	});
 
 	// ==========================================
 	// 3. UNIFIED COMBINED SEARCH/FILTER SYSTEM
 	// ==========================================
-	function updateWorkspaceVisibility() {
+	const workspaceFilterAnimations = new WeakMap<HTMLElement, Animation>();
+	let workspaceFilterUpdateId = 0;
+
+	function animateWorkspaceCard(card: HTMLElement, keyframes: Keyframe[], duration = 160) {
+		const animation = card.animate(keyframes, {
+			duration,
+			easing: "cubic-bezier(0.2, 0.7, 0.2, 1)",
+			fill: "both"
+		});
+		workspaceFilterAnimations.set(card, animation);
+		animation.onfinish = () => {
+			if (workspaceFilterAnimations.get(card) !== animation) return;
+			workspaceFilterAnimations.delete(card);
+			animation.cancel();
+		};
+	}
+
+	function updateWorkspaceVisibility(animate = false) {
+		const updateId = ++workspaceFilterUpdateId;
 		const searchQuery = workspaceSearch?.value.toLowerCase().trim() || "";
-		const noteCards = document.querySelectorAll(".notes-grid .note-item");
+		const noteCards = Array.from(document.querySelectorAll<HTMLElement>(".notes-grid .note-item"));
+		const canAnimate = animate &&
+			!document.hidden &&
+			!window.matchMedia("(prefers-reduced-motion: reduce)").matches &&
+			typeof Element.prototype.animate === "function";
+		const firstPositions = new Map<HTMLElement, DOMRect>();
+		const matchingCards: HTMLElement[] = [];
+		const targets = new Map<HTMLElement, boolean>();
+		let matchingCardCount = 0;
 
 		noteCards.forEach((card) => {
+			const runningAnimation = workspaceFilterAnimations.get(card);
+			if (runningAnimation) {
+				runningAnimation.cancel();
+				workspaceFilterAnimations.delete(card);
+			}
+
 			const titleText = card.querySelector("h4")?.textContent?.toLowerCase() || "";
 			const contentText = card.querySelector("p")?.textContent?.toLowerCase() || "";
 			const cardCategory = card.getAttribute("data-category") || "General";
@@ -2896,17 +3841,16 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 						? noteCard.dataset.pinned === "true"
 						: cardCategory === activeCategoryFilter;
 
-			if (matchesSearch && matchesView && matchesTab) {
-				card.classList.remove("filtered-out");
-			} else {
-				card.classList.add("filtered-out");
+			const matches = matchesSearch && matchesView && matchesTab;
+			targets.set(noteCard, matches);
+			if (matches) {
+				matchingCards.push(noteCard);
+				matchingCardCount++;
 			}
 		});
 
-		// Empty state checker
-		const visibleCards = document.querySelectorAll(".notes-grid .note-item:not(.filtered-out)");
 		let noResultsMsg = document.getElementById("noSearchResultsMessage");
-		if (visibleCards.length === 0 && noteCards.length > 0) {
+		if (matchingCardCount === 0 && noteCards.length > 0) {
 			if (!noResultsMsg) {
 				document.querySelector(".notes-grid")?.insertAdjacentHTML("beforeend", `
 					<div id="noSearchResultsMessage" style="grid-column: 1 / -1; text-align:center; color:rgba(255,255,255,0.4); padding: 40px 20px;">
@@ -2917,7 +3861,135 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 		} else {
 			noResultsMsg?.remove();
 		}
+
+		noteCards.forEach((card) => {
+			if (!card.classList.contains("filtered-out")) {
+				firstPositions.set(card, card.getBoundingClientRect());
+			}
+		});
+
+		const enteringCards = noteCards.filter((card) =>
+			targets.get(card) && card.classList.contains("filtered-out")
+		);
+		const exitingCards = noteCards.filter((card) =>
+			!targets.get(card) && !card.classList.contains("filtered-out")
+		);
+
+		if (!canAnimate) {
+			noteCards.forEach((card) => {
+				card.classList.toggle("filtered-out", !targets.get(card));
+			});
+		} else {
+			enteringCards.forEach((card) => card.classList.remove("filtered-out"));
+			enteringCards.forEach((card) => {
+				animateWorkspaceCard(card, [
+					{ opacity: 0, transform: "translateY(10px) scale(0.98)" },
+					{ opacity: 1, transform: "translateY(0) scale(1)" }
+				]);
+			});
+
+			notesGrid?.getBoundingClientRect();
+			firstPositions.forEach((firstPosition, card) => {
+				if (!targets.get(card)) return;
+				const lastPosition = card.getBoundingClientRect();
+				const deltaX = firstPosition.left - lastPosition.left;
+				const deltaY = firstPosition.top - lastPosition.top;
+				if (Math.abs(deltaX) < 1 && Math.abs(deltaY) < 1) return;
+				animateWorkspaceCard(card, [
+					{ opacity: 0.8, transform: `translate(${deltaX}px, ${deltaY}px)` },
+					{ opacity: 1, transform: "translate(0, 0)" }
+				]);
+			});
+
+			let remainingExits = exitingCards.length;
+			const finishExit = (card: HTMLElement, animation: Animation) => {
+				if (
+					updateId !== workspaceFilterUpdateId ||
+					workspaceFilterAnimations.get(card) !== animation
+				) return;
+				remainingExits--;
+				if (remainingExits > 0) return;
+
+				const positionsBeforeRemoval = new Map<HTMLElement, DOMRect>();
+				matchingCards.forEach((matchingCard) => {
+					positionsBeforeRemoval.set(matchingCard, matchingCard.getBoundingClientRect());
+				});
+				exitingCards.forEach((exitingCard) => exitingCard.classList.add("filtered-out"));
+				notesGrid?.getBoundingClientRect();
+				exitingCards.forEach((exitingCard) => {
+					const exitAnimation = workspaceFilterAnimations.get(exitingCard);
+					if (exitAnimation) {
+						workspaceFilterAnimations.delete(exitingCard);
+						exitAnimation.cancel();
+					}
+				});
+				positionsBeforeRemoval.forEach((firstPosition, matchingCard) => {
+					const lastPosition = matchingCard.getBoundingClientRect();
+					const deltaX = firstPosition.left - lastPosition.left;
+					const deltaY = firstPosition.top - lastPosition.top;
+					if (Math.abs(deltaX) < 1 && Math.abs(deltaY) < 1) return;
+					animateWorkspaceCard(matchingCard, [
+						{ opacity: 0.8, transform: `translate(${deltaX}px, ${deltaY}px)` },
+						{ opacity: 1, transform: "translate(0, 0)" }
+					]);
+				});
+			};
+
+			exitingCards.forEach((card) => {
+				const animation = card.animate([
+					{ opacity: 1, transform: "translateY(0) scale(1)" },
+					{ opacity: 0, transform: "translateY(-8px) scale(0.98)" }
+				], {
+					duration: 190,
+					easing: "cubic-bezier(0.2, 0.7, 0.2, 1)",
+					fill: "both"
+				});
+				workspaceFilterAnimations.set(card, animation);
+				animation.onfinish = () => finishExit(card, animation);
+			});
+		}
+
 	}
+
+	function applyDashboardHashRoute(animate = false) {
+		const section = window.location.hash.slice(1).toLowerCase();
+		if (section === "notes" || section === "favorites" || section === "pinned") {
+			workspaceViewMode = "dashboard";
+			activeCategoryFilter = section === "notes" ? "all" : section;
+			const notesViewControls = document.getElementById("notesViewControls");
+			const dashboardProductivity = document.getElementById("dashboardProductivity");
+			if (notesViewControls) notesViewControls.hidden = false;
+			if (dashboardProductivity) dashboardProductivity.hidden = true;
+			const viewTitle = document.querySelector<HTMLElement>(".workspace-view-title");
+			if (viewTitle) viewTitle.textContent = section === "notes" ? "My Notes" : section === "favorites" ? "Favorites" : "Pinned Notes";
+		} else if (!section) {
+			workspaceViewMode = serverViewMode;
+			activeCategoryFilter = initialCategoryFilter;
+			const notesViewControls = document.getElementById("notesViewControls");
+			const dashboardProductivity = document.getElementById("dashboardProductivity");
+			if (notesViewControls) notesViewControls.hidden = serverViewMode === "dashboard";
+			if (dashboardProductivity) dashboardProductivity.hidden = serverViewMode !== "dashboard";
+			const viewTitle = document.querySelector<HTMLElement>(".workspace-view-title");
+			if (viewTitle) {
+				viewTitle.textContent = serverViewMode === "notes"
+					? "My Notes"
+					: serverViewMode === "favorites"
+						? "Favorites"
+						: serverViewMode === "pinned"
+							? "Pinned Notes"
+							: serverViewMode === "trash" ? "Trash" : "Dashboard";
+			}
+		} else {
+			return;
+		}
+
+		document.querySelectorAll<HTMLButtonElement>(".tab-btn").forEach((button) => {
+			button.classList.toggle("active", button.dataset.filter === activeCategoryFilter);
+		});
+		updateWorkspaceVisibility(animate);
+	}
+
+	window.addEventListener("hashchange", () => applyDashboardHashRoute(true));
 
 	// Connect Event listeners to Tab Switch Buttons
 	document.querySelectorAll(".tab-btn").forEach(btn => {
@@ -2926,7 +3998,7 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 			btn.classList.add("active");
 			
 			activeCategoryFilter = btn.getAttribute("data-filter") || "all";
-			updateWorkspaceVisibility();
+			updateWorkspaceVisibility(true);
 		});
 	});
 
@@ -2935,20 +4007,21 @@ const miniCalendarDates = Array.from({ length: 42 }, (_, index) => {
 			btn.classList.toggle("active", btn.dataset.filter === activeCategoryFilter);
 		});
 	}
-	updateWorkspaceVisibility();
+	if (hashViewMode) applyDashboardHashRoute();
+	else updateWorkspaceVisibility();
 
 	// Re-route Search Field inputs to call the unified visibility controller
 	workspaceSearch?.addEventListener("input", () => {
 		if (workspaceSearch.value.length > 0) clearSearchBtn?.classList.add("is-visible");
 		else clearSearchBtn?.classList.remove("is-visible");
-		updateWorkspaceVisibility();
+		updateWorkspaceVisibility(true);
 	});
 
 	clearSearchBtn?.addEventListener("click", () => {
 		if (workspaceSearch) workspaceSearch.value = "";
 		clearSearchBtn?.classList.remove("is-visible");
 		workspaceSearch?.focus();
-		updateWorkspaceVisibility();
+		updateWorkspaceVisibility(true);
 	});
 
 	// ==========================================
@@ -3014,7 +4087,9 @@ addNoteForm?.addEventListener("submit", async (e) => {
 	const skeletonCard = document.getElementById("activeCreationSkeleton");
 	if (skeletonCard) applyDashboardStyleScope(skeletonCard);
 
+	noteLocationRequestId++;
 	const formData = new FormData(addNoteForm);
+	hideNoteLocationStatus();
 
 	try {
 		const res = await fetch('/notes-api', { method: 'POST', body: formData });
@@ -3037,6 +4112,9 @@ addNoteForm?.addEventListener("submit", async (e) => {
 			// Inside your addNoteForm data.success code path block, update innerHTML string to include drawer skeleton:
 skeletonCard.innerHTML = `
 	<div class="note-controls">
+		<label class="note-selection-control">
+			<input type="checkbox" class="note-selection-checkbox" data-bulk-select-note value="${data.id}" aria-label="Select ${escapeHTML(titleValue)}" />
+		</label>
 		<button type="button" class="btn-card-action btn-comment-toggle" data-id="${data.id}" aria-controls="drawer-${data.id}" aria-expanded="false">💬 Chat <span class="chat-unread-badge" data-unread-count hidden></span></button>
 		<button class="btn-card-action btn-share-note" data-id="${data.id}">Share</button>
 	</div>
@@ -3063,10 +4141,10 @@ skeletonCard.innerHTML = `
 			<div class="chat-composer-field">
 				<button type="button" class="chat-attachment-toggle" aria-label="Show attachment options" aria-expanded="false" title="Attachments">+</button>
 				<div class="chat-attachment-actions" hidden>
-					<button type="button" class="chat-attachment-icon" data-chat-attachment="file" aria-label="Attach file" title="Attach file">📎</button>
-					<button type="button" class="chat-attachment-icon" data-chat-attachment="photo" aria-label="Add photo" title="Add photo">🖼️</button>
-					<button type="button" class="chat-attachment-icon" data-chat-attachment="camera" aria-label="Open camera" title="Open camera">📷</button>
-					<button type="button" class="chat-attachment-icon" data-chat-attachment="location" aria-label="Add location" title="Add location">📍</button>
+					<button type="button" class="chat-attachment-icon" data-chat-attachment="file" aria-label="Attach file" title="Attach file"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m8 12.5 7.1-7.1a3.2 3.2 0 0 1 4.5 4.5l-9.2 9.2a5 5 0 0 1-7.1-7.1l9.2-9.2"/></svg></button>
+					<button type="button" class="chat-attachment-icon" data-chat-attachment="photo" aria-label="Add photo" title="Add photo"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9" r="1.5"/><path d="m21 15-5-5L5 20"/></svg></button>
+					<button type="button" class="chat-attachment-icon" data-chat-attachment="camera" aria-label="Open camera" title="Open camera"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M4 7h3l1.5-2h7L17 7h3a1 1 0 0 1 1 1v11H3V8a1 1 0 0 1 1-1Z"/><circle cx="12" cy="13" r="3.5"/></svg></button>
+					<button type="button" class="chat-attachment-icon" data-chat-attachment="location" aria-label="Add location" title="Add location"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M20 10c0 5-8 12-8 12S4 15 4 10a8 8 0 1 1 16 0Z"/><circle cx="12" cy="10" r="2.5"/></svg></button>
 				</div>
 				<input class="chat-attachment-input" type="file" name="fileAttachments" multiple accept=".pdf,.txt,.csv,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.jpg,.jpeg,.png,.gif,.webp,.heic,.heif" />
 				<input class="chat-attachment-input" type="file" name="photoAttachments" multiple accept="image/jpeg,image/png,image/gif,image/webp,image/heic,image/heif" />
@@ -3094,10 +4172,12 @@ attachCommentToggleListener(skeletonCard.querySelector(".btn-comment-toggle")); 
 			updateWorkspaceVisibility();
 		} else {
 			document.getElementById("activeCreationSkeleton")?.remove();
+			updateNoteAttachmentStatus();
 			alert(data.message || "Failed to save note.");
 		}
 	} catch {
 		document.getElementById("activeCreationSkeleton")?.remove();
+		updateNoteAttachmentStatus();
 		alert("Error reaching workspace endpoint.");
 	}
 });
@@ -3106,20 +4186,22 @@ function renderNoteAttachments(attachments: any[]): string {
 	if (!Array.isArray(attachments) || attachments.length === 0) return "";
 	const renderedAttachments = attachments.map((attachment) => {
 		if (attachment.attachment_type === "location") {
+			const coordinates = `${attachment.latitude}, ${attachment.longitude}`;
 			const latitude = escapeHTML(String(attachment.latitude));
 			const longitude = escapeHTML(String(attachment.longitude));
-			return `<a href="https://www.google.com/maps?q=${encodeURIComponent(`${attachment.latitude},${attachment.longitude}`)}" target="_blank" rel="noopener noreferrer" title="Open exact coordinates in Google Maps">📍 Exact location: ${latitude}, ${longitude}</a>`;
+			return `<div class="note-attachment-card" role="listitem"><span class="note-attachment-icon" aria-hidden="true">📍</span><div class="note-attachment-content"><span class="note-attachment-kind">Location</span><span class="note-attachment-name">${latitude}, ${longitude}</span><a class="note-attachment-action" href="https://www.google.com/maps?q=${encodeURIComponent(coordinates)}" target="_blank" rel="noopener noreferrer" title="Open exact coordinates in Google Maps">Open in Maps</a></div></div>`;
 		}
 		const icon = attachment.attachment_type === "camera" ? "📷" : attachment.attachment_type === "photo" ? "🖼️" : "📎";
+		const typeLabel = attachment.attachment_type === "camera" ? "Camera" : attachment.attachment_type === "photo" ? "Photo" : "File";
 		const id = encodeURIComponent(String(attachment.id));
 		const name = escapeHTML(String(attachment.original_name));
 		const downloadUrl = `/note-attachments-api?id=${id}`;
 		if (String(attachment.mime_type || "").startsWith("image/")) {
-			return `<div class="note-image-attachment"><button type="button" class="attachment-preview-open" data-preview-src="${downloadUrl}&preview=1" data-preview-download="${downloadUrl}" data-preview-name="${name}" aria-label="View ${name} full screen"><img src="${downloadUrl}&preview=1" alt="Preview of ${name}" loading="lazy" /></button><a href="${downloadUrl}" download>${icon} Download ${name}</a></div>`;
+			return `<div class="note-attachment-card note-image-attachment" role="listitem"><button type="button" class="attachment-preview-open" data-preview-src="${downloadUrl}&preview=1" data-preview-download="${downloadUrl}" data-preview-name="${name}" aria-label="View ${name} full screen"><img src="${downloadUrl}&preview=1" alt="Preview of ${name}" loading="lazy" /></button><div class="note-attachment-content"><span class="note-attachment-kind">${typeLabel}</span><span class="note-attachment-name">${name}</span><a class="note-attachment-action" href="${downloadUrl}" download>Download</a></div></div>`;
 		}
-		return `<a href="${downloadUrl}" download>${icon} ${name}</a>`;
+		return `<div class="note-attachment-card" role="listitem"><span class="note-attachment-icon" aria-hidden="true">${icon}</span><div class="note-attachment-content"><span class="note-attachment-kind">${typeLabel}</span><span class="note-attachment-name">${name}</span><a class="note-attachment-action" href="${downloadUrl}" download>Download</a></div></div>`;
 	});
-	return `<div class="note-attachment-list">${renderedAttachments.join("")}</div>`;
+	return `<div class="note-attachment-list" role="list" aria-label="Note attachments">${renderedAttachments.join("")}</div>`;
 }
 
 	// Input Character Countdown Metrics Helper
@@ -3320,7 +4402,8 @@ async function fetchAndRenderComments(noteId: string): Promise<boolean> {
 		}
 
 		if (data.comments.length === 0) {
-			feed.innerHTML = `<div style="font-size:11px; text-align:center; color:rgba(255,255,255,0.3); padding:10px 0;">💬 No comments yet. Start the conversation!</div>`;
+			feed.innerHTML = `<div class="comment-empty-state">💬 No comments yet. Start the conversation!</div>`;
+			applyDashboardStyleScope(feed);
 			return true;
 		}
 
@@ -3342,7 +4425,7 @@ async function fetchAndRenderComments(noteId: string): Promise<boolean> {
 				return `<a class="comment-attachment-link" href="${downloadUrl}" download aria-label="Download ${escapeHTML(name)}" title="${escapeHTML(name)}">${icon}</a>`;
 			}).join("");
 			const textMarkup = c.text
-				? `<div style="color:rgba(255,255,255,0.95);">${escapeHTML(String(c.text))}</div>`
+				? `<div class="comment-bubble-text">${escapeHTML(String(c.text))}</div>`
 				: "";
 			const attachmentMarkup = attachmentLinks
 				? `<div class="comment-attachment-list">${attachmentLinks}</div>`
@@ -3359,6 +4442,7 @@ async function fetchAndRenderComments(noteId: string): Promise<boolean> {
 			`;
 		}).join("");
 
+		applyDashboardStyleScope(feed);
 		feed.scrollTop = feed.scrollHeight;
 		return true;
 	} catch (error) {
