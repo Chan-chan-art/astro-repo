@@ -23,7 +23,7 @@ export const POST: APIRoute = async ({ request, cookies }) => {
     }
 
     const [ownerRows]: any = await pool.execute(
-      'SELECT id FROM users WHERE BINARY username = ?',
+      'SELECT id, username, display_name FROM users WHERE BINARY username = ?',
       [sessionData.username]
     );
     if (ownerRows.length !== 1) {
@@ -45,7 +45,7 @@ export const POST: APIRoute = async ({ request, cookies }) => {
 
     const ownerId = ownerRows[0].id;
     const [ownedNotes]: any = await pool.execute(
-      'SELECT id FROM notes WHERE id = ? AND user_id = ?',
+      'SELECT id, title FROM notes WHERE id = ? AND user_id = ?',
       [noteId, ownerId]
     );
     if (ownedNotes.length !== 1) {
@@ -73,10 +73,35 @@ export const POST: APIRoute = async ({ request, cookies }) => {
       return new Response(JSON.stringify({ success: false, message: "This note is already shared with that user." }), { status: 409 });
     }
 
-    await pool.execute(
-      "INSERT INTO note_shares (note_id, shared_with_user_id, permission_level) VALUES (?, ?, 'view')",
-      [noteId, friendId]
-    );
+    const permissionLevel = 'view';
+    const permissionLabel = permissionLevel === 'edit' ? 'Editor' : 'Viewer';
+    const ownerName = ownerRows[0].display_name || ownerRows[0].username;
+    const notificationMessage =
+      `${ownerName} shared '${ownedNotes[0].title}' with you (${permissionLabel}).`;
+    const connection = await pool.getConnection();
+    try {
+      await connection.beginTransaction();
+      await connection.execute(
+        'INSERT INTO note_shares (note_id, shared_with_user_id, permission_level) VALUES (?, ?, ?)',
+        [noteId, friendId, permissionLevel]
+      );
+      await connection.execute(
+        `INSERT INTO notifications
+           (recipient_id, actor_id, note_id, type, message, is_read)
+         VALUES (?, ?, ?, 'shared', ?, 0)`,
+        [friendId, ownerId, noteId, notificationMessage]
+      );
+      await connection.commit();
+    } catch (error) {
+      try {
+        await connection.rollback();
+      } catch (rollbackError) {
+        console.error("Share API transaction rollback failed.", rollbackError);
+      }
+      throw error;
+    } finally {
+      connection.release();
+    }
 
     return new Response(JSON.stringify({ success: true }), { status: 200 });
   } catch (error) {

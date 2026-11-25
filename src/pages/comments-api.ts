@@ -323,6 +323,46 @@ export const POST: APIRoute = async ({ request, cookies }) => {
           [noteId, commentId, location.latitude, location.longitude]
         );
       }
+
+      const mentionedUsernames = new Set(
+        Array.from(commentText.matchAll(/@([a-zA-Z0-9_]+)/g), (match) => match[1].toLowerCase())
+      );
+      const [recipientRows]: any = await connection.execute(
+        `SELECT collaborator_users.id AS recipient_id, collaborator_users.username,
+                n.title AS note_title,
+                COALESCE(NULLIF(actor.display_name, ''), actor.username) AS actor_name
+         FROM notes n
+         JOIN users actor ON actor.id = ?
+         CROSS JOIN (
+           SELECT n.user_id AS user_id
+           FROM notes n
+           WHERE n.id = ?
+           UNION
+           SELECT ns.shared_with_user_id AS user_id
+           FROM note_shares ns
+           WHERE ns.note_id = ?
+         ) AS note_participants
+         JOIN users AS collaborator_users
+           ON collaborator_users.id = note_participants.user_id
+         WHERE n.id = ?
+           AND collaborator_users.id <> ?`,
+        [userId, noteId, noteId, noteId, userId]
+      );
+      for (const recipient of recipientRows) {
+        const notificationType = mentionedUsernames.has(String(recipient.username).toLowerCase())
+          ? 'mention'
+          : 'comment';
+        const message = notificationType === 'mention'
+          ? `${recipient.actor_name} mentioned you in '${recipient.note_title}'.`
+          : `${recipient.actor_name} commented on '${recipient.note_title}'.`;
+        await connection.execute(
+          `INSERT INTO notifications
+             (recipient_id, actor_id, note_id, type, message, is_read)
+           VALUES (?, ?, ?, ?, ?, 0)`,
+          [recipient.recipient_id, userId, noteId, notificationType, message]
+        );
+      }
+
       await connection.commit();
       savedFilePaths.length = 0;
     } catch (error) {

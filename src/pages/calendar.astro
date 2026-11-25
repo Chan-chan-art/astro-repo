@@ -269,16 +269,44 @@ const bio = userRows[0].bio || "";
 				background: #fbbf24;
 			}
 
+			.calendar-event-dot.is-linked-note {
+				background: #c4b5fd;
+			}
+
 			.calendar-event-dot.is-completed {
 				background: #34d399;
 			}
 
 			.selected-day-panel {
-				margin-top: 20px;
-				padding: 18px;
-				border: 1px solid var(--page-border);
-				border-radius: 18px;
-				background: var(--page-surface-soft);
+				position: fixed;
+				z-index: 40;
+				top: 0;
+				right: 0;
+				width: min(420px, calc(100vw - 24px));
+				height: 100vh;
+				overflow-y: auto;
+				padding: 22px;
+				border-left: 1px solid var(--page-border);
+				background: rgba(35, 31, 91, 0.96);
+				box-shadow: -18px 0 48px rgba(20, 16, 62, 0.32);
+				transform: translateX(105%);
+				opacity: 0;
+				visibility: hidden;
+				transition: transform 0.24s ease, opacity 0.24s ease, visibility 0.24s ease;
+			}
+
+			.selected-day-panel.is-open {
+				transform: translateX(0);
+				opacity: 1;
+				visibility: visible;
+			}
+
+			:root[data-theme="light"] .selected-day-panel {
+				background: rgba(90, 77, 164, 0.98);
+			}
+
+			:root[data-theme="dark"] .selected-day-panel {
+				background: rgba(18, 16, 38, 0.98);
 			}
 
 			.selected-day-header {
@@ -291,6 +319,81 @@ const bio = userRows[0].bio || "";
 			.selected-day-header h3 {
 				margin: 0;
 				font-size: 17px;
+			}
+
+			.drawer-close {
+				width: 36px;
+				height: 36px;
+				padding: 0;
+				border-radius: 50%;
+				font-size: 18px;
+			}
+
+			.drawer-section {
+				margin-top: 16px;
+			}
+
+			.drawer-section-heading {
+				display: flex;
+				align-items: center;
+				justify-content: space-between;
+				margin: 0 0 8px;
+				color: var(--page-muted);
+				font-size: 11px;
+				font-weight: 700;
+				text-transform: uppercase;
+				letter-spacing: 0.08em;
+			}
+
+			.selected-linked-note-list,
+			.selected-reminder-list {
+				display: grid;
+				gap: 8px;
+				margin: 0;
+				padding: 0;
+				list-style: none;
+			}
+
+			.selected-linked-note {
+				display: block;
+				padding: 11px 12px;
+				border: 1px solid rgba(196, 181, 253, 0.28);
+				border-radius: 12px;
+				background: rgba(196, 181, 253, 0.12);
+				color: var(--page-text);
+				text-decoration: none;
+			}
+
+			.selected-linked-note strong,
+			.selected-linked-note span {
+				display: block;
+			}
+
+			.selected-linked-note strong {
+				font-size: 12px;
+			}
+
+			.selected-linked-note span {
+				margin-top: 4px;
+				color: var(--page-muted);
+				font-size: 11px;
+			}
+
+			.quick-note-form {
+				display: grid;
+				grid-template-columns: minmax(0, 1fr) auto;
+				gap: 8px;
+				margin-top: 10px;
+			}
+
+			.quick-note-form input {
+				min-width: 0;
+			}
+
+			.quick-note-form button {
+				background: #fff;
+				color: #6a11cb;
+				font-weight: 700;
 			}
 
 			.selected-reminder-list {
@@ -500,6 +603,8 @@ const bio = userRows[0].bio || "";
 				.reminder-form .wide { grid-column: auto; }
 				.selected-day-header { align-items: flex-start; flex-direction: column; }
 				.selected-reminder { flex-direction: column; }
+				.selected-day-panel { width: 100%; }
+				.quick-note-form { grid-template-columns: 1fr; }
 			}
 		</style>
 		<script is:inline>
@@ -551,10 +656,25 @@ const bio = userRows[0].bio || "";
 				<section class="selected-day-panel" aria-labelledby="selectedDateHeading">
 					<div class="selected-day-header">
 						<h3 id="selectedDateHeading">Selected day</h3>
-						<button type="button" id="addCalendarReminder">Add reminder</button>
+						<div class="calendar-actions">
+							<button type="button" id="addCalendarReminder">Add reminder</button>
+							<button type="button" class="drawer-close" id="closeCalendarDrawer" aria-label="Close day panel">×</button>
+						</div>
 					</div>
-					<ul class="selected-reminder-list" id="selectedReminderList"></ul>
-					<p class="empty-day-message" id="emptyDayMessage">Choose a date to view its reminders.</p>
+					<div class="drawer-section">
+						<h4 class="drawer-section-heading">Linked notes</h4>
+						<ul class="selected-linked-note-list" id="selectedLinkedNoteList"></ul>
+						<form class="quick-note-form" id="quickCalendarNoteForm">
+							<input id="quickCalendarNoteTitle" name="title" maxlength="30" required aria-label="Note title" />
+							<button type="submit">Add</button>
+						</form>
+						<p class="calendar-status" id="quickCalendarNoteStatus" role="status" aria-live="polite"></p>
+					</div>
+					<div class="drawer-section">
+						<h4 class="drawer-section-heading">Reminders</h4>
+						<ul class="selected-reminder-list" id="selectedReminderList"></ul>
+						<p class="empty-day-message" id="emptyDayMessage">Choose a date to view its reminders.</p>
+					</div>
 					<form class="reminder-form" id="calendarReminderForm" hidden>
 						<div class="wide">
 							<label for="calendarReminderTitle">Title</label>
@@ -602,12 +722,16 @@ const bio = userRows[0].bio || "";
 				date: string;
 				time: string;
 				completed: number | boolean;
+				noteId: number | string | null;
+				noteTitle: string | null;
 			};
 
 			const calendarGrid = document.getElementById("calendarGrid")!;
 			const monthLabel = document.getElementById("calendarMonthLabel")!;
 			const selectedDateHeading = document.getElementById("selectedDateHeading")!;
 			const reminderList = document.getElementById("selectedReminderList")!;
+			const linkedNoteList = document.getElementById("selectedLinkedNoteList")!;
+			const selectedDayPanel = document.querySelector<HTMLElement>(".selected-day-panel")!;
 			const emptyDayMessage = document.getElementById("emptyDayMessage")!;
 			const calendarForm = document.getElementById("calendarReminderForm") as HTMLFormElement;
 			const calendarStatus = document.getElementById("calendarStatus")!;
@@ -669,10 +793,41 @@ const bio = userRows[0].bio || "";
 				selectedDateHeading.textContent = selectedDate.toLocaleDateString(undefined, {
 					weekday: "long", month: "long", day: "numeric", year: "numeric"
 				});
+				const quickNoteInput = document.getElementById("quickCalendarNoteTitle") as HTMLInputElement;
+				quickNoteInput.placeholder = `Add note for ${selectedDate.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
+				quickNoteInput.setAttribute("aria-label", `Add note for ${selectedDate.toLocaleDateString(undefined, { month: "long", day: "numeric", year: "numeric" })}`);
 				reminderList.replaceChildren();
+				linkedNoteList.replaceChildren();
 				const dayReminders = remindersFor(selectedDate);
 				emptyDayMessage.hidden = dayReminders.length > 0;
 				if (dayReminders.length === 0) emptyDayMessage.textContent = "No reminders for this day yet.";
+
+				const linkedNotes = new Map<string, string>();
+				for (const reminder of dayReminders) {
+					if (reminder.noteId && reminder.noteTitle) {
+						linkedNotes.set(String(reminder.noteId), reminder.noteTitle);
+					}
+				}
+				if (linkedNotes.size === 0) {
+					const empty = document.createElement("li");
+					empty.className = "empty-day-message";
+					empty.textContent = "No notes linked to this day.";
+					linkedNoteList.append(empty);
+				} else {
+					for (const [noteId, noteTitle] of linkedNotes) {
+						const item = document.createElement("li");
+						const link = document.createElement("a");
+						link.className = "selected-linked-note";
+						link.href = `/dashboard?view=notes#note-${encodeURIComponent(noteId)}`;
+						const title = document.createElement("strong");
+						title.textContent = noteTitle;
+						const label = document.createElement("span");
+						label.textContent = "Open linked note";
+						link.append(title, label);
+						item.append(link);
+						linkedNoteList.append(item);
+					}
+				}
 
 				for (const reminder of dayReminders) {
 					const item = document.createElement("li");
@@ -854,6 +1009,7 @@ const bio = userRows[0].bio || "";
 							const indicator = document.createElement("span");
 							indicator.className = "calendar-event-dot";
 							if (Boolean(Number(reminder.completed))) indicator.classList.add("is-completed");
+							if (reminder.noteId) indicator.classList.add("is-linked-note");
 							dots.append(indicator);
 						}
 						button.append(dots);
@@ -862,6 +1018,7 @@ const bio = userRows[0].bio || "";
 						selectedDate = date;
 						renderCalendar();
 						renderSelectedDate();
+						selectedDayPanel.classList.add("is-open");
 						setStatus("");
 					});
 					calendarGrid.append(button);
@@ -925,6 +1082,64 @@ const bio = userRows[0].bio || "";
 				closeReminderForm();
 				setStatus("");
 			});
+			document.getElementById("closeCalendarDrawer")?.addEventListener("click", () => {
+				selectedDayPanel.classList.remove("is-open");
+			});
+			document.addEventListener("keydown", (event) => {
+				if (event.key === "Escape") selectedDayPanel.classList.remove("is-open");
+			});
+			document.getElementById("quickCalendarNoteForm")?.addEventListener("submit", async (event) => {
+				event.preventDefault();
+				const form = event.currentTarget as HTMLFormElement;
+				const submitButton = form.querySelector<HTMLButtonElement>('button[type="submit"]');
+				const status = document.getElementById("quickCalendarNoteStatus")!;
+				const input = document.getElementById("quickCalendarNoteTitle") as HTMLInputElement;
+				const title = input.value.trim();
+				if (!title) return;
+				if (submitButton) submitButton.disabled = true;
+				status.textContent = "";
+				status.classList.remove("error");
+				try {
+					const noteForm = new FormData();
+					noteForm.set("title", title);
+					noteForm.set("content", title);
+					noteForm.set("category", "General");
+					const noteResponse = await fetch("/notes-api", {
+						method: "POST",
+						body: noteForm
+					});
+					const noteData = await noteResponse.json();
+					if (!noteResponse.ok || !noteData.success) {
+						throw new Error(noteData.message || "Unable to add this note.");
+					}
+
+					const reminderResponse = await fetch("/reminders-api", {
+						method: "POST",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({
+							title: title,
+							description: "",
+							date: dateKey(selectedDate),
+							time: "09:00",
+							noteId: noteData.id
+						})
+					});
+					const reminderData = await reminderResponse.json();
+					if (!reminderResponse.ok || !reminderData.success) {
+						throw new Error(reminderData.message || "The note was added, but could not be linked to this date.");
+					}
+
+					form.reset();
+					status.textContent = "Note added and linked to this day.";
+					await loadCalendarReminders();
+				} catch (error) {
+					console.error("Calendar quick note creation error:", error);
+					status.textContent = error instanceof Error ? error.message : "Unable to add this note.";
+					status.classList.add("error");
+				} finally {
+					if (submitButton) submitButton.disabled = false;
+				}
+			});
 			calendarForm.addEventListener("submit", async (event) => {
 				event.preventDefault();
 				const formData = new FormData(calendarForm);
@@ -977,6 +1192,7 @@ const bio = userRows[0].bio || "";
 			if (requestedDate) {
 				selectedDate = requestedDate;
 				visibleMonth = new Date(requestedDate.getFullYear(), requestedDate.getMonth(), 1);
+				selectedDayPanel.classList.add("is-open");
 			}
 			void loadCalendarReminders();
 		</script>
